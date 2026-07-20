@@ -1,0 +1,104 @@
+CknIngestion — Sample: Bedrock Knowledge Base Confluence Ingestion
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+This sample is licensed under the MIT-0 License. See the LICENSE file.
+
+------------------------------------------------------------------------------
+Third-Party Dependency Licenses
+------------------------------------------------------------------------------
+
+This project depends on the third-party open source packages listed below.
+Each remains under its own license. The table was compiled from the pinned
+versions in requirements.lock and the packages' published metadata.
+
+NOTE: The summary table below was compiled from requirements.lock. A machine-
+generated `pip-licenses` report (run against a fresh install of this package) is
+appended at the end of this file under "pip-licenses output". Re-run
+`pip-licenses --format=markdown` before release if dependencies change.
+
+Python runtime dependencies (from requirements.lock):
+
+| Package             | Version      | License                          |
+|---------------------|--------------|----------------------------------|
+| annotated-types     | 0.7.0        | MIT                              |
+| beautifulsoup4      | 4.14.3       | MIT                              |
+| bleach              | 6.4.0        | Apache-2.0                       |
+| boto3               | 1.42.89      | Apache-2.0                       |
+| botocore            | 1.42.89      | Apache-2.0                       |
+| certifi             | 2026.2.25    | MPL-2.0                          |
+| charset-normalizer  | 3.4.7        | MIT                              |
+| defusedxml          | 0.7.1        | PSF-2.0                          |
+| idna                | 3.11         | BSD-3-Clause                     |
+| jmespath            | 1.1.0        | MIT                              |
+| markdownify         | 1.2.2        | MIT                              |
+| pydantic            | 2.13.4       | MIT                              |
+| pydantic-core       | 2.46.4       | MIT                              |
+| python-dateutil     | 2.9.0.post0  | Apache-2.0 AND BSD-3-Clause      |
+| python-json-logger  | 4.1.0        | BSD-2-Clause                     |
+| requests            | 2.33.1       | Apache-2.0                       |
+| s3transfer          | 0.16.0       | Apache-2.0                       |
+| six                 | 1.17.0       | MIT                              |
+| soupsieve           | 2.8.3        | MIT                              |
+| typing-extensions   | 4.15.0       | PSF-2.0                          |
+| typing-inspection   | 0.4.2        | MIT                              |
+| urllib3             | 2.6.3        | MIT                              |
+| webencodings        | 0.5.1        | BSD-3-Clause                     |
+
+Infrastructure (CDK) dependencies (from src/infra/package.json):
+
+| Package             | Version      | License                          |
+|---------------------|--------------|----------------------------------|
+| aws-cdk-lib         | ^2.258.0     | Apache-2.0                       |
+| constructs          | ^10.0.0      | Apache-2.0                       |
+| fast-uri            | ^3.1.2       | MIT                              |
+| source-map-support  | ^0.5.21      | MIT                              |
+
+Outside the strict aws-samples allowlist (Apache-2.0, MIT, BSD-2, BSD-3,
+MIT-0, ISC) — retained as common transitive dependencies; confirm with your
+OSPO process before release:
+
+- certifi (MPL-2.0): a CA-certificate bundle pulled in transitively by
+  `requests`. MPL-2.0 is file-level (weak) copyleft; using the package as an
+  unmodified dependency does not impose copyleft on this sample.
+- defusedxml (PSF-2.0) and typing-extensions (PSF-2.0): Python Software
+  Foundation License, a permissive license.
+
+------------------------------------------------------------------------------
+pip-licenses output (generated)
+------------------------------------------------------------------------------
+
+Generated with `pip-licenses --format=markdown --order=name` against a fresh
+install of this package. The project itself (`ckningestion`, MIT-0) is listed as
+UNKNOWN by the tool and is excluded from the third-party set below.
+
+| Name               | Version     | License                              |
+|--------------------|-------------|--------------------------------------|
+| annotated-types    | 0.7.0       | MIT License                          |
+| beautifulsoup4     | 4.15.0      | MIT License                          |
+| bleach             | 6.4.0       | Apache Software License              |
+| boto3              | 1.43.52     | Apache-2.0                           |
+| botocore           | 1.43.52     | Apache-2.0                           |
+| certifi            | 2026.6.17   | Mozilla Public License 2.0 (MPL 2.0) |
+| charset-normalizer | 3.4.9       | MIT                                  |
+| defusedxml         | 0.7.1       | Python Software Foundation License   |
+| idna               | 3.18        | BSD-3-Clause                         |
+| jmespath           | 1.1.0       | MIT License                          |
+| markdownify        | 1.2.3       | MIT License                          |
+| pydantic           | 2.13.4      | MIT                                  |
+| pydantic_core      | 2.46.4      | MIT                                  |
+| python-dateutil    | 2.9.0.post0 | Apache Software License; BSD License |
+| python-json-logger | 4.1.0       | BSD-2-Clause                         |
+| requests           | 2.34.2      | Apache Software License              |
+| s3transfer         | 0.19.1      | Apache Software License              |
+| six                | 1.17.0      | MIT License                          |
+| soupsieve          | 2.9         | MIT                                  |
+| typing-inspection  | 0.4.2       | MIT                                  |
+| typing_extensions  | 4.16.0      | PSF-2.0                              |
+| urllib3            | 2.7.0       | MIT                                  |
+| webencodings       | 0.5.1       | BSD License                          |
+
+Licenses outside the strict aws-samples allowlist (Apache-2.0, MIT, BSD-2,
+BSD-3, MIT-0, ISC), confirmed by the scan and flagged for OSPO review:
+  - certifi           — MPL-2.0 (weak, file-level copyleft; unmodified transitive dep)
+  - defusedxml        — Python Software Foundation License (permissive)
+  - typing_extensions — PSF-2.0 (permissive)

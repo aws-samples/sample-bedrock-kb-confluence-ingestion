@@ -1,0 +1,19 @@
+{
+  "customers": [
+    {
+      "name": "example-customer",
+      "account_id": "123456789012",
+      "kb_id": "YOUR_KB_ID",
+      "kb_region": "us-east-1",
+      "status": "active",
+      "confluence": {
+        "base_url": "https://your-confluence.atlassian.net",
+        "kms_key_arn": "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000",
+        "kms_secret_id": "ams/ckn/confluence-token",
+        "spaces": [
+          "YOUR_SPACE_KEY"
+        ]
+      }
+    }
+  ]
+}

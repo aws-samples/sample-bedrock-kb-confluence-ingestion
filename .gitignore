@@ -1,0 +1,59 @@
+*~
+*#
+*.swp
+
+*.DS_Store
+
+__pycache__/
+*.py[cod]
+*.pyc
+*$py.class
+*.egg-info/
+
+/.coverage
+/.coverage.*
+/.cache
+/.pytest_cache
+/.mypy_cache
+/.hypothesis
+
+/doc/_apidoc/
+/build
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+config/secrets.*
+secrets.json
+
+# CDK context cache (may contain real account/VPC/subnet IDs)
+cdk.context.json
+**/cdk.context.json
+
+# Distribution / build artifacts
+dist/
+*.js.map
+.build/
+
+# CDK output
+cdk.out/
+
+# Virtual environments
+.venv/
+venv/
+
+# Dependency directories
+node_modules/
+
+# Generated documents (not tracked)
+*.docx
+*.pdf
+src/infra/core.*
+
+# CSE security scanner artifacts (auto-added by cse init)
+.security-scan/
+build.log
+build_before.log
+*.log
