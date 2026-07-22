@@ -11,20 +11,20 @@
 - CloudWatch log group (`/ckn/ingestion`)
 - OpenSearch Serverless collection (`ckn-kb-vectors`) + security policies
 - Bedrock KB execution role (`ckn-bedrock-kb-role`)
+- Bedrock Knowledge Base + S3 data source — only when deployed with
+  `--context deployKb=true` (skipped by default because the KB requires the
+  manually created AOSS vector index; see two-phase deployment below and in
+  `POST_DEPLOYMENT.md`)
 
 ## What CDK Does NOT Manage
 
-The following resources are created manually and must NOT be added to CloudFormation:
+The following resource is created manually and must NOT be added to CloudFormation:
 
 ### AOSS Vector Index (`bedrock-knowledge-base-default-index`)
 - Created via AOSS Dashboard
 - Collection: `ckn-kb-vectors` (ID: `<your-collection-id>`)
 
-### Bedrock Knowledge Base (ID: `YOUR_KB_ID`)
-- Created via AWS CLI
-- Data source: S3 (`ams-ckn-123456789012/confluence/`)
-
-### Why These Are Outside IaC
+### Why This Is Outside IaC
 
 Some account configurations apply a gateway restriction on AOSS that
 blocks data plane write operations (index creation) from Lambda, ECS, and
@@ -57,8 +57,15 @@ docker run --rm \
   node:22 \
   sh -c "rm -rf cdk.out && npm install --silent && npx cdk deploy \
     --require-approval never \
+    --context deployKb=true \
     --toolkit-stack-name CDKToolkit-cknpipe"
 ```
+
+The `deployKb=true` context flag creates the Bedrock Knowledge Base and its S3
+data source. It requires the AOSS vector index to already exist — on the very
+first deploy (before the index is created), pass `--context deployKb=false`
+instead, then redeploy with `deployKb=true` after creating the index. See the
+two-phase deployment in `POST_DEPLOYMENT.md`.
 
 ### Override KB ID
 ```bash
@@ -76,15 +83,16 @@ Toolkit stack: `CDKToolkit-cknpipe`
 
 ## Manual Steps for New Deployment
 
-1. Deploy CDK stack (creates AOSS collection + all infra)
+1. Deploy CDK stack without the KB (`--context deployKb=false`) — creates the
+   AOSS collection + all infra
 2. Open AOSS Dashboard → create vector index `bedrock-knowledge-base-default-index`
    - Settings: `knn: true`, `knn.algo_param.ef_search: 512`
    - Mappings:
      - `bedrock-knowledge-base-default-vector`: knn_vector, dim 1024, hnsw/l2/faiss
      - `AMAZON_BEDROCK_TEXT`: text
      - `AMAZON_BEDROCK_METADATA`: text (index: false)
-3. Create Bedrock KB via CLI pointing to the AOSS collection
-4. Create S3 data source on the KB
-5. Update `client.json` with the new KB ID
-6. Build + push Docker image
-7. Trigger ingestion run
+3. Redeploy with `--context deployKb=true` — creates the Bedrock KB and its
+   S3 data source via CDK
+4. Update `client.json` with the new KB ID (stack output)
+5. Build + push Docker image
+6. Trigger ingestion run

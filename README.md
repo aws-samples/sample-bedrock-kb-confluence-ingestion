@@ -78,7 +78,7 @@ customer-managed KMS key (CMK).
 
 ## Deployment
 
-Detailed, step-by-step instructions are in [`DEPLOYMENT.md`](DEPLOYMENT.md) and
+Detailed, step-by-step instructions are in
 [`POST_DEPLOYMENT.md`](POST_DEPLOYMENT.md). At a high level:
 
 1. Deploy the CDK stack (`src/infra/`) to create the infrastructure.
@@ -147,7 +147,7 @@ To avoid ongoing charges, delete everything this sample created:
 | `test/` | Python unit and property tests |
 | `client.json` | Per-deployment configuration (placeholders) |
 | `Dockerfile` | Container image for the Fargate task |
-| `DEPLOYMENT.md`, `POST_DEPLOYMENT.md`, `SOP.md` | Operational guides |
+| `POST_DEPLOYMENT.md`, `SOP.md` | Operational guides |
 
 ## License
 
