@@ -14,12 +14,11 @@ import ckn_ingestion.cli as cli_module
 
 
 def _make_config(spaces: list[str] | None = None, kb_last_synced: str | None = None) -> MagicMock:
-    """Return a mock CustomerConfig."""
+    """Return a mock AppConfig."""
     config = MagicMock()
     config.confluence.spaces = spaces or ["SPACE1", "SPACE2"]
     config.confluence.kms_secret_id = "arn:aws:secretsmanager:us-east-1:123:secret:test"
     config.kb_last_synced = kb_last_synced
-    config.account_id = "123456789012"
     return config
 
 

@@ -57,27 +57,24 @@ Edit `client.json` and replace the placeholder values:
 
 ```json
 {
-  "customers": [
-    {
-      "name": "example-customer",
-      "account_id": "123456789012",
-      "kb_id": "YOUR_KB_ID",
-      "kb_region": "us-east-1",
-      "status": "active",
-      "confluence": {
-        "base_url": "https://your-confluence.atlassian.net",
-        "kms_key_arn": "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000",
-        "kms_secret_id": "ams/ckn/confluence-token",
-        "spaces": ["YOUR_SPACE_KEY"]
-      }
-    }
-  ]
+  "kb_id": "YOUR_KB_ID",
+  "kb_region": "us-east-1",
+  "confluence": {
+    "base_url": "https://your-confluence.atlassian.net",
+    "kms_key_arn": "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000",
+    "kms_secret_id": "ams/ckn/confluence-token",
+    "spaces": ["YOUR_SPACE_KEY"]
+  }
 }
 ```
 
+The AWS account ID is not configured: the app derives it at runtime from its
+own credentials (STS `GetCallerIdentity`) to build the S3 bucket name
+(`ams-ckn-<account_id>`), so uploads always target the account the task runs in.
+
 The Confluence API token is **never** stored in `client.json`. It is read at
 runtime from AWS Secrets Manager (`kms_secret_id`), encrypted with a
-customer-managed KMS key.
+customer-managed KMS key (CMK).
 
 ## Deployment
 
@@ -131,7 +128,7 @@ To avoid ongoing charges, delete everything this sample created:
 ## Security
 
 - This is sample code. **Review and harden it before any production use.**
-- Do not commit real credentials, account IDs, ARNs, or customer data. `client.json`
+- Do not commit real credentials, account IDs, or ARNs. `client.json`
   ships with placeholders only; secrets belong in AWS Secrets Manager.
 - IAM policies in the CDK stack aim to be least-privilege but should be reviewed
   against your own security requirements.

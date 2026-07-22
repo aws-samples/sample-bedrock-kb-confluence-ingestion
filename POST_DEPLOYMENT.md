@@ -15,22 +15,22 @@ docker run --rm \
   -e CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text) \
   -e CDK_DEFAULT_REGION=us-east-1 \
   node:20 \
-  bash -c "npm install -g aws-cdk@latest 2>/dev/null && cdk deploy --require-approval never --context skipKb=true"
+  bash -c "npm install -g aws-cdk@latest 2>/dev/null && cdk deploy --require-approval never --context deployKb=false"
 ```
 
 ## 2. Two-Phase Deployment (Knowledge Base)
 
-The Bedrock Knowledge Base requires an OpenSearch Serverless vector index that cannot be created via CloudFormation. Deploy in two phases:
+The Bedrock Knowledge Base requires an OpenSearch Serverless vector index that cannot be created via CloudFormation. The stack only creates the KB when the `deployKb` context variable is set to `true` (the default is to skip it). Deploy in two phases:
 
-**Phase 1** — Deploy infrastructure (skip KB):
+**Phase 1** — Deploy infrastructure (skip KB; the AOSS index does not exist yet):
 ```bash
-cdk deploy --require-approval never --context skipKb=true
+cdk deploy --require-approval never --context deployKb=false
 ```
 
-**Phase 2** — Create the AOSS index, then deploy KB:
+**Phase 2** — Create the AOSS index, then deploy the KB:
 ```bash
 ./scripts/create-aoss-index.sh --profile default --region us-east-1
-cdk deploy --require-approval never
+cdk deploy --require-approval never --context deployKb=true
 ```
 
 ## 3. AOSS VPC Endpoint — Must Use AOSS API, Not EC2 API
@@ -89,23 +89,20 @@ aws secretsmanager put-secret-value \
 
 ```json
 {
-  "customers": [
-    {
-      "name": "example-customer",
-      "account_id": "123456789012",
-      "kb_id": "<KB_ID from stack output>",
-      "kb_region": "us-east-1",
-      "status": "active",
-      "confluence": {
-        "base_url": "https://your-confluence.atlassian.net",
-        "kms_key_arn": "<KmsKeyArn from stack output>",
-        "kms_secret_id": "ams/ckn/confluence-token",
-        "spaces": ["YOUR_SPACE_KEY"]
-      }
-    }
-  ]
+  "kb_id": "<KB_ID from stack output>",
+  "kb_region": "us-east-1",
+  "confluence": {
+    "base_url": "https://your-confluence.atlassian.net",
+    "kms_key_arn": "<KmsKeyArn from stack output>",
+    "kms_secret_id": "ams/ckn/confluence-token",
+    "spaces": ["YOUR_SPACE_KEY"]
+  }
 }
 ```
+
+There is no `account_id` field: the app derives the account ID at runtime from
+its task credentials (STS `GetCallerIdentity`) to build the S3 bucket name
+(`ams-ckn-<account_id>`).
 
 ### 6.3 Build and push the Docker image
 

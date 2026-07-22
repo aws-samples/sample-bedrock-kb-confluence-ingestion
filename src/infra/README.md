@@ -60,7 +60,7 @@ docker run --rm \
     --toolkit-stack-name CDKToolkit-cknpipe"
 ```
 
-### Override KB ID (if creating a new KB for a different customer)
+### Override KB ID
 ```bash
 ... --context kbId=NEW_KB_ID
 ```
@@ -74,7 +74,7 @@ docker run --rm \
 CDK bootstrap qualifier: `cknpipe`
 Toolkit stack: `CDKToolkit-cknpipe`
 
-## Manual Steps for New Customer Deployment
+## Manual Steps for New Deployment
 
 1. Deploy CDK stack (creates AOSS collection + all infra)
 2. Open AOSS Dashboard → create vector index `bedrock-knowledge-base-default-index`

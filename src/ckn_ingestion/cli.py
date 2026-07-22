@@ -205,6 +205,11 @@ def _run(args: argparse.Namespace) -> None:
     bedrock_client = boto3.client("bedrock-runtime", config=_BOTO_CONFIG)
     s3_client = boto3.client("s3", config=_BOTO_CONFIG)
 
+    # 6b. Derive the AWS account ID from the active credentials. It determines
+    # the S3 bucket name (ams-ckn-{account_id}), so deriving it — rather than
+    # configuring it — guarantees uploads target the account we run in.
+    account_id = boto3.client("sts", config=_BOTO_CONFIG).get_caller_identity()["Account"]
+
     # 7. Determine spaces to process
     spaces_to_process = [args.space] if args.space else config.confluence.spaces
 
@@ -261,7 +266,7 @@ def _run(args: argparse.Namespace) -> None:
                 try:
                     upload_page(
                         s3_client,
-                        config.account_id,
+                        account_id,
                         page.space_key,
                         page.page_id,
                         chunks,
