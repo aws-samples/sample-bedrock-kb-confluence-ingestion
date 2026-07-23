@@ -27,6 +27,7 @@ __pycache__/
 *.key
 config/secrets.*
 secrets.json
+client.local.json
 
 # CDK context cache (may contain real account/VPC/subnet IDs)
 cdk.context.json

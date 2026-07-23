@@ -46,7 +46,7 @@ Key components:
   models used here must be enabled in your target Region).
 - AWS CLI v2, configured with credentials for the target account.
 - Docker.
-- Node.js 20+ and AWS CDK v2 (`npm install -g aws-cdk`) for the infrastructure.
+- Node.js 22+ and AWS CDK v2 (`npm install -g aws-cdk`) for the infrastructure.
 - Python 3.11+ to run or test the app locally.
 - An Atlassian Confluence Cloud site and an API token
   (https://id.atlassian.com/manage-profile/security/api-tokens).
@@ -78,14 +78,22 @@ customer-managed KMS key (CMK).
 
 ## Deployment
 
-Detailed, step-by-step instructions are in
-[`POST_DEPLOYMENT.md`](POST_DEPLOYMENT.md). At a high level:
+**Quickstart** (automated):
+```bash
+./scripts/deploy.sh --account 123456789012 --region us-west-2 \
+  --confluence-email user@example.com \
+  --confluence-url https://your-site.atlassian.net \
+  --space-key KB
+```
+
+**Manual steps** (detailed in [`POST_DEPLOYMENT.md`](POST_DEPLOYMENT.md)):
 
 1. Deploy the CDK stack (`src/infra/`) to create the infrastructure.
 2. Create the AOSS vector index (see [`src/infra/README.md`](src/infra/README.md)).
-3. Store your Confluence API token in Secrets Manager as `email:api_token`.
+3. Store your Confluence API token in Secrets Manager as `email:api_token`
+   (**use `printf`, not `echo`** — trailing newlines silently break auth).
 4. Update `client.json` with the CDK output values (`kb_id`, `kms_key_arn`).
-5. Build and push the container image to ECR.
+5. Build and push the container image to ECR (**both** `:latest` and `:index-creator` tags).
 6. Trigger an ingestion run (or wait for the daily schedule).
 
 A local dry run (no S3 writes) is available for testing extraction and
@@ -114,16 +122,26 @@ python -m ckn_ingestion --dry-run --config client.json
 
 To avoid ongoing charges, delete everything this sample created:
 
-1. Delete the Bedrock Knowledge Base and its S3 data source (if created).
-2. Delete the AOSS vector index and collection.
-3. Empty and delete the S3 buckets (`ams-ckn-<account>` and its access-log bucket).
-4. Destroy the CDK stack:
+**Automated** (handles RETAIN'd resources and the CDK toolkit stack):
+```bash
+./scripts/teardown.sh --account 123456789012 --region us-west-2
+```
+
+**Manual** (if you prefer step-by-step):
+
+1. Disable the EventBridge schedule (`ckn-ingestion-daily`).
+2. Delete the Bedrock Knowledge Base and its S3 data source (if created).
+3. Delete the AOSS vector index and collection.
+4. Empty and delete the S3 buckets (`ams-ckn-<account>` and `ams-ckn-<account>-access-logs`).
+5. Destroy the CDK stack:
    ```bash
    cd src/infra && cdk destroy
    ```
    Note: some resources use `RemovalPolicy.RETAIN` (S3 buckets, KMS key, log
    group, ECR repository) and must be deleted manually after `cdk destroy`.
-5. Delete the Secrets Manager secret and schedule any KMS key deletion.
+6. Delete the Secrets Manager secret (`ams/ckn/confluence-token`).
+7. Schedule KMS key deletion (30-day waiting period).
+8. Delete the CDK Toolkit stack (`CDKToolkit-cknpipe`) and its staging bucket/ECR.
 
 ## Security
 
@@ -145,6 +163,7 @@ To avoid ongoing charges, delete everything this sample created:
 | `src/ckn_ingestion/` | Python ingestion application |
 | `src/infra/` | AWS CDK (TypeScript) infrastructure |
 | `test/` | Python unit and property tests |
+| `scripts/` | Deploy (`deploy.sh`) and teardown (`teardown.sh`) automation |
 | `client.json` | Per-deployment configuration (placeholders) |
 | `Dockerfile` | Container image for the Fargate task |
 | `POST_DEPLOYMENT.md`, `SOP.md` | Operational guides |

@@ -512,6 +512,55 @@ class TestMultiChunkUpload:
 
 
 # ---------------------------------------------------------------------------
+# Personal-space key (leading ~) — F11 regression test
+# ---------------------------------------------------------------------------
+
+
+class TestPersonalSpaceKey:
+    """Validate that personal-space keys (leading ~) are accepted.
+
+    Confluence personal-space keys always start with ~ followed by a hex user ID
+    (e.g., ~5b58bdf9e288ee2d9b4ba4fe). Previously this was silently rejected by
+    the sanitizer regex, causing zero pages to upload from personal spaces.
+    """
+
+    def test_tilde_prefixed_space_key_accepted(self):
+        """A personal-space key starting with ~ produces valid S3 keys."""
+        client = _make_s3_client()
+        upload_page(
+            client,
+            "123456789012",
+            "~5b58bdf9e288ee2d9b4ba4fe",
+            "163934",
+            ["# Personal space content"],
+            _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        content_call = client.put_object.call_args_list[0]
+        assert content_call.kwargs["Key"] == "confluence/~5b58bdf9e288ee2d9b4ba4fe/163934.md"
+
+    def test_tilde_only_in_first_position(self):
+        """A ~ in the middle of a value is still rejected (only leading ~ is valid)."""
+        import pytest
+        from ckn_ingestion.s3_uploader import _sanitize_key_component
+
+        # Tilde in leading position — OK
+        assert _sanitize_key_component("~abc123", "space_key") == "~abc123"
+
+        # Tilde after first char — rejected (not in [A-Za-z0-9._-])
+        with pytest.raises(ValueError):
+            _sanitize_key_component("abc~123", "space_key")
+
+    def test_pure_tilde_rejected(self):
+        """A bare ~ with no trailing chars is rejected."""
+        import pytest
+        from ckn_ingestion.s3_uploader import _sanitize_key_component
+
+        with pytest.raises(ValueError, match="bare tilde"):
+            _sanitize_key_component("~", "space_key")
+
+
+# ---------------------------------------------------------------------------
 # Empty chunks list
 # ---------------------------------------------------------------------------
 

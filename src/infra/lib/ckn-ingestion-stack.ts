@@ -306,15 +306,28 @@ export class CknIngestionStack extends cdk.Stack {
             new iam.PolicyStatement({
               sid: 'BedrockInvoke',
               actions: ['bedrock:InvokeModel'],
-              // Scoped to the deployment Region (least privilege) rather than a
-              // wildcard Region. NOTE: if you switch to a cross-Region inference
-              // profile (e.g. `us.anthropic.claude*`), the foundation-model
-              // resource must also cover the profile's member Regions — widen
-              // these ARNs accordingly for that use case.
+              // The app invokes a cross-Region inference profile
+              // (`us.anthropic.claude*`), which routes requests to the profile's
+              // member Regions (us-east-1, us-east-2, us-west-2). InvokeModel is
+              // therefore authorized against BOTH the inference-profile ARN (in
+              // the deployment Region/account) AND the underlying foundation-model
+              // ARNs in every member Region — so the foundation-model resource
+              // must span those Regions, not just the deployment Region.
               resources: [
-                `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude*`,
+                `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude*`,
+                `arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude*`,
+                `arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude*`,
                 `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.anthropic.claude*`,
               ],
+            }),
+            new iam.PolicyStatement({
+              sid: 'BedrockKbSync',
+              // After a successful crawl the app lists the KB's data sources and
+              // starts an ingestion job (cli.py). These are bedrock-agent
+              // control-plane actions, distinct from InvokeModel, and are scoped
+              // to this account's knowledge bases in the deployment Region.
+              actions: ['bedrock:ListDataSources', 'bedrock:StartIngestionJob'],
+              resources: [`arn:aws:bedrock:${this.region}:${this.account}:knowledge-base/*`],
             }),
             new iam.PolicyStatement({ sid: 'S3Upload', actions: ['s3:PutObject', 's3:PutObjectTagging'], resources: [`${bucket.bucketArn}/confluence/*`] }),
             new iam.PolicyStatement({
