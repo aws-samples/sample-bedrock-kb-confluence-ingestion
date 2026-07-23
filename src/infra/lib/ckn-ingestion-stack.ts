@@ -14,6 +14,7 @@ import * as aoss from 'aws-cdk-lib/aws-opensearchserverless';
 import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import { Construct } from 'constructs';
 import { CloudTrailDetection } from './cloudtrail-detection';
+import { OperationalAlarms } from './operational-alarms';
 
 export class CknIngestionStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -570,7 +571,17 @@ export class CknIngestionStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------------
-    // 11. CloudTrail Detection — security monitoring alarms
+    // 11. Operational alarms — run-failure + absence-of-success (heartbeat)
+    //     Wired to the same SNS topic as the security alarms. Metric filters
+    //     read the ingestion log group; no extra task IAM required.
+    // -----------------------------------------------------------------------
+    new OperationalAlarms(this, 'OperationalAlarms', {
+      logGroup,
+      alarmTopicArn: alertsTopic.topicArn,
+    });
+
+    // -----------------------------------------------------------------------
+    // 12. CloudTrail Detection — security monitoring alarms
     // -----------------------------------------------------------------------
     new CloudTrailDetection(this, 'CloudTrailDetection', {
       cloudTrailLogGroupName: '/aws/cloudtrail/ckn-trail',

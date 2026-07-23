@@ -325,3 +325,11 @@ def _run(args: argparse.Namespace) -> None:
             )
         except Exception as exc:
             logger.error("Failed to start KB sync: %s — %s", type(exc).__name__, exc)
+
+    # 12. Emit a stable run-completion marker. A CloudWatch metric filter keys
+    # off the literal token INGESTION_RUN_COMPLETE to drive an absence-of-success
+    # (heartbeat) alarm: no marker within the expected window => the pipeline
+    # either did not run or did not finish cleanly. Skipped on dry runs (they do
+    # not represent a real ingestion) and when uploads failed (not a clean run).
+    if not args.dry_run and not upload_failed:
+        logger.info("INGESTION_RUN_COMPLETE run_id=%s", correlation_id.get())
