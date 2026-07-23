@@ -413,3 +413,63 @@ class TestFlattenSplitIntegration:
             cli_module.main([])
 
         assert call_order == ["classify", "flatten"]
+
+
+# ---------------------------------------------------------------------------
+# PII masking — F8 regression: page IDs must survive log scrubbing
+# ---------------------------------------------------------------------------
+
+
+class TestPIIMasking:
+    """Validate the log PII scrubber.
+
+    F8: 9-digit Confluence page IDs were matched by the SSN pattern and
+    clobbered to [REDACTED_SSN] in every log line, destroying the ability to
+    correlate a warning/error to its page. The SSN pattern now requires
+    explicit separators, so bare digit runs (page IDs) survive.
+    """
+
+    @staticmethod
+    def _scrub(msg: str) -> str:
+        for pattern, replacement in cli_module._PII_PATTERNS:
+            msg = pattern.sub(replacement, msg)
+        return msg
+
+    @pytest.mark.parametrize("page_id", ["66024", "163934", "12345678", "123456789"])
+    def test_page_ids_survive_scrubbing(self, page_id: str):
+        """Bare digit runs (Confluence page IDs, up to 9 digits) are not redacted."""
+        out = self._scrub(f"attachment 404 on page {page_id}")
+        assert page_id in out
+        assert "[REDACTED_SSN]" not in out
+
+    @pytest.mark.parametrize("ssn", ["123-45-6789", "123 45 6789", "123.45.6789"])
+    def test_separator_formatted_ssns_still_redacted(self, ssn: str):
+        """Canonically-formatted SSNs (with separators) are still redacted."""
+        out = self._scrub(f"user ssn {ssn} leaked")
+        assert "[REDACTED_SSN]" in out
+        assert ssn not in out
+
+    def test_account_id_still_redacted(self):
+        """12-digit account IDs remain redacted (unaffected by the SSN change)."""
+        out = self._scrub("account 123456789012 accessed")
+        assert "[REDACTED_ACCOUNT_ID]" in out
+        assert "123456789012" not in out
+
+    def test_email_still_redacted(self):
+        """Emails remain redacted (unaffected by the SSN change)."""
+        out = self._scrub("contact user@example.com for details")
+        assert "[REDACTED_EMAIL]" in out
+        assert "user@example.com" not in out
+
+    def test_filter_scrubs_log_record(self):
+        """The _PIIMaskingFilter rewrites a record's message in place."""
+        import logging
+
+        record = logging.LogRecord(
+            name="test", level=logging.WARNING, pathname=__file__, lineno=1,
+            msg="attachment 404 on page %s (ssn 123-45-6789)", args=("163934",),
+            exc_info=None,
+        )
+        assert cli_module._PIIMaskingFilter().filter(record) is True
+        assert "163934" in record.msg
+        assert "[REDACTED_SSN]" in record.msg
