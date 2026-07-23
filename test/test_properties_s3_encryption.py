@@ -19,9 +19,13 @@ from ckn_ingestion.s3_uploader import upload_page
 # Custom Hypothesis strategies
 # ---------------------------------------------------------------------------
 
-# Safe characters for S3 key components (letters and digits)
+# Safe characters for S3 key components (ASCII letters and digits only).
 _s3_safe_text = st.text(
-    alphabet=st.characters(whitelist_categories=("L", "N")),
+    alphabet=st.characters(
+        whitelist_categories=("L", "N"),
+        whitelist_characters="",
+        max_codepoint=127,
+    ),
     min_size=1,
     max_size=30,
 )

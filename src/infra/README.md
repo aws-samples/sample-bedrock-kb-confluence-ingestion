@@ -42,7 +42,7 @@ account configuration.
 ## Deploying
 
 ### Prerequisites
-- Docker (for running CDK with Node 22)
+- Docker (for running CDK with Node.js 22+)
 - AWS CLI configured with default profile
 
 ### Deploy command

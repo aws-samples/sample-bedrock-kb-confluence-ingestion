@@ -11,8 +11,11 @@ from ckn_ingestion.models import MetadataSidecar
 
 logger = logging.getLogger(__name__)
 
-# Allowlist pattern for S3 key path components: alphanumeric, hyphens, underscores, dots.
-_SAFE_KEY_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Allowlist pattern for S3 key path components: alphanumeric, hyphens,
+# underscores, dots. Leading `~` is permitted because Confluence personal-space
+# keys always start with `~` followed by a hex user ID
+# (e.g. `~5b58bdf9e288ee2d9b4ba4fe`).
+_SAFE_KEY_COMPONENT = re.compile(r"^[A-Za-z0-9~][A-Za-z0-9._-]*$")
 
 
 def _sanitize_key_component(value: str, label: str) -> str:
@@ -37,7 +40,13 @@ def _sanitize_key_component(value: str, label: str) -> str:
     if ".." in value or "/" in value or "\\" in value:
         raise ValueError(f"{label} contains path traversal or separator characters: {value!r}")
     if not _SAFE_KEY_COMPONENT.match(value):
-        raise ValueError(f"{label} contains disallowed characters: {value!r}")
+        raise ValueError(
+            f"{label} contains disallowed characters: {value!r}. "
+            "Allowed: alphanumeric, hyphens, underscores, dots, and a leading tilde."
+        )
+    # Reject a bare `~` — personal-space keys are always `~` + hex ID
+    if value == "~":
+        raise ValueError(f"{label} must not be a bare tilde: {value!r}")
     return value
 
 

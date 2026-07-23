@@ -6,13 +6,13 @@
 #   ./scripts/create-aoss-index.sh [--profile PROFILE] [--region REGION]
 #
 # Defaults:
-#   --profile default
-#   --region  us-east-1
+#   --profile $AWS_PROFILE or 'default'
+#   --region  $AWS_REGION or 'us-west-2'
 
 set -euo pipefail
 
-PROFILE="default"
-REGION="us-east-1"
+PROFILE="${AWS_PROFILE:-default}"
+REGION="${AWS_REGION:-us-west-2}"
 CLUSTER="ckn-ingestion"
 TASK_FAMILY="ckn-create-aoss-index"
 
