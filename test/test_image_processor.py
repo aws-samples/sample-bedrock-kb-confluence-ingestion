@@ -9,6 +9,7 @@ import requests
 
 from ckn_ingestion.image_processor import (
     PROCESSABLE_MEDIA_TYPES,
+    _MODEL_ID,
     _failure_block,
     _success_block,
     process_image_attachment,
@@ -117,7 +118,9 @@ class TestProcessImageAttachment:
         assert result == "A PNG diagram."
         client.converse.assert_called_once()
         call_kwargs = client.converse.call_args[1]
-        assert call_kwargs["modelId"] == "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        # Assert against the module constant so a future model bump doesn't
+        # re-stale this test (the pipeline uses a cross-region inference profile).
+        assert call_kwargs["modelId"] == _MODEL_ID
         # Verify image format is png
         content = call_kwargs["messages"][0]["content"]
         image_block = next(c for c in content if "image" in c)
@@ -568,7 +571,12 @@ class TestDownloadAttachment:
 
         phase1_response = MagicMock()
         phase1_response.status_code = 302
-        phase1_response.headers = {"Location": "https://cdn.example.com/image.png"}
+        # Redirect target must be an allowlisted host (SEC-050 redirect hardening);
+        # real Confluence Cloud redirects to *.atlassian.net. Matches the sibling
+        # test_follows_302_redirect_to_cdn_without_auth fixture.
+        phase1_response.headers = {
+            "Location": "https://media-cdn.atlassian.net/signed/image.png?token=abc"
+        }
 
         phase2_response = MagicMock()
         phase2_response.status_code = 200
