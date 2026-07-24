@@ -345,6 +345,19 @@ export class CknIngestionStack extends cdk.Stack {
               },
             }),
             new iam.PolicyStatement({ sid: 'S3Upload', actions: ['s3:PutObject', 's3:PutObjectTagging'], resources: [`${bucket.bucketArn}/confluence/*`] }),
+            // F2 orphan cleanup: after a page's current chunk generation is written,
+            // the app lists the page's existing objects and deletes stale ones no
+            // longer written (prevents duplicate vectors from orphaned generations).
+            new iam.PolicyStatement({ sid: 'S3DeleteOrphans', actions: ['s3:DeleteObject'], resources: [`${bucket.bucketArn}/confluence/*`] }),
+            // ListBucket is a bucket-level action (not object-level); scope it to the
+            // confluence/ prefix via the s3:prefix condition so the task can only
+            // enumerate keys it also writes.
+            new iam.PolicyStatement({
+              sid: 'S3ListForCleanup',
+              actions: ['s3:ListBucket'],
+              resources: [bucket.bucketArn],
+              conditions: { StringLike: { 's3:prefix': ['confluence/*'] } },
+            }),
             new iam.PolicyStatement({
               sid: 'AossAccess',
               // `aoss:APIAccessAll` is the single data-plane action OpenSearch

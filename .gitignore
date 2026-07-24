@@ -61,3 +61,6 @@ build_before.log
 
 # Local AI-assistant guidance (kept out of the published sample)
 /CLAUDE.md
+
+# Subagent worktrees (harness-managed, not source)
+.claude/worktrees/

@@ -31,9 +31,17 @@ def _make_sidecar(**overrides) -> MetadataSidecar:
     return MetadataSidecar(metadata_attributes=attrs)
 
 
-def _make_s3_client() -> MagicMock:
+def _make_s3_client(existing_keys: list[str] | None = None) -> MagicMock:
+    """Mock S3 client. ``existing_keys`` seeds what the orphan-cleanup paginator
+    "finds" already in the bucket for the page prefix (default: none)."""
     client = MagicMock()
     client.put_object.return_value = {}
+    client.delete_objects.return_value = {}
+
+    pages = [{"Contents": [{"Key": k} for k in (existing_keys or [])]}]
+    paginator = MagicMock()
+    paginator.paginate.return_value = pages
+    client.get_paginator.return_value = paginator
     return client
 
 
@@ -345,6 +353,183 @@ class TestErrorHandling:
                 kms_key_arn=_TEST_KMS_KEY_ARN,
             )
         assert "page-xyz" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# F2: orphan-generation cleanup
+# ---------------------------------------------------------------------------
+
+
+def _deleted_keys(client) -> set[str]:
+    """Collect every key passed to delete_objects across all calls."""
+    keys: set[str] = set()
+    for call in client.delete_objects.call_args_list:
+        for obj in call.kwargs["Delete"]["Objects"]:
+            keys.add(obj["Key"])
+    return keys
+
+
+class TestOrphanCleanup:
+    def test_no_existing_objects_no_delete(self):
+        client = _make_s3_client(existing_keys=[])
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        client.delete_objects.assert_not_called()
+
+    def test_stale_chunks_from_previous_generation_deleted(self):
+        # Previous run wrote 3 chunks; this run writes a single chunk. The two
+        # now-unused chunk objects (and their sidecars) must be deleted.
+        existing = [
+            "confluence/OPS/12345_chunk_0.md",
+            "confluence/OPS/12345_chunk_0.md.metadata.json",
+            "confluence/OPS/12345_chunk_1.md",
+            "confluence/OPS/12345_chunk_1.md.metadata.json",
+            "confluence/OPS/12345_chunk_2.md",
+            "confluence/OPS/12345_chunk_2.md.metadata.json",
+        ]
+        client = _make_s3_client(existing_keys=existing)
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Single now"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        deleted = _deleted_keys(client)
+        # All six old chunk-generation objects removed...
+        assert set(existing) == deleted
+        # ...and the just-written single-chunk objects are NOT deleted.
+        assert "confluence/OPS/12345.md" not in deleted
+        assert "confluence/OPS/12345.md.metadata.json" not in deleted
+
+    def test_rewritten_keys_are_not_deleted(self):
+        # Existing objects that match this run's write-set must be preserved.
+        existing = ["confluence/OPS/12345.md", "confluence/OPS/12345.md.metadata.json"]
+        client = _make_s3_client(existing_keys=existing)
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        client.delete_objects.assert_not_called()
+
+    def test_other_pages_objects_are_never_touched(self):
+        # Page 123 must not delete page 1234's objects (prefix collision guard).
+        existing = [
+            "confluence/OPS/123.md",  # this page, old single-chunk (orphan now)
+            "confluence/OPS/1234.md",  # DIFFERENT page — must survive
+            "confluence/OPS/1234_chunk_0.md",  # DIFFERENT page — must survive
+        ]
+        client = _make_s3_client(existing_keys=existing)
+        # This run writes page 123 as 2 chunks.
+        upload_page(
+            client, "123456789012", "OPS", "123", ["# a", "# b"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        deleted = _deleted_keys(client)
+        assert "confluence/OPS/123.md" in deleted  # orphaned single-chunk of THIS page
+        assert "confluence/OPS/1234.md" not in deleted
+        assert "confluence/OPS/1234_chunk_0.md" not in deleted
+
+    def test_no_cleanup_when_a_write_failed(self):
+        # If any put_object failed, cleanup must be skipped to avoid deleting the
+        # only surviving copy of the content.
+        existing = ["confluence/OPS/12345_chunk_9.md"]
+        client = _make_s3_client(existing_keys=existing)
+        client.put_object.side_effect = RuntimeError("S3 down")
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        client.delete_objects.assert_not_called()
+
+    def test_list_failure_does_not_raise_or_delete(self):
+        client = _make_s3_client()
+        client.get_paginator.side_effect = RuntimeError("list denied")
+        # Must not raise; must not delete.
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        client.delete_objects.assert_not_called()
+
+    def test_delete_failure_does_not_raise(self, caplog):
+        existing = ["confluence/OPS/12345_chunk_0.md"]
+        client = _make_s3_client(existing_keys=existing)
+        client.delete_objects.side_effect = RuntimeError("delete denied")
+        with caplog.at_level("ERROR", logger="ckn_ingestion.s3_uploader"):
+            upload_page(
+                client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+                kms_key_arn=_TEST_KMS_KEY_ARN,
+            )
+        assert "12345" in caplog.text
+
+    def test_orphans_deleted_logs_metric_token(self, caplog):
+        existing = ["confluence/OPS/12345_chunk_0.md"]
+        client = _make_s3_client(existing_keys=existing)
+        with caplog.at_level("INFO", logger="ckn_ingestion.s3_uploader"):
+            upload_page(
+                client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+                kms_key_arn=_TEST_KMS_KEY_ARN,
+            )
+        assert "ORPHANS_DELETED" in caplog.text
+
+    def test_pagination_and_batching_over_1000_orphans(self):
+        # 2500 stale orphan chunk objects spread across 3 list pages must all be
+        # deleted, in delete_objects batches of <=1000.
+        orphans = [f"confluence/OPS/12345_chunk_{i}.md" for i in range(2500)]
+        client = MagicMock()
+        client.put_object.return_value = {}
+        client.delete_objects.return_value = {}
+        # Paginator yields 3 pages (1000/1000/500).
+        pages = [
+            {"Contents": [{"Key": k} for k in orphans[0:1000]]},
+            {"Contents": [{"Key": k} for k in orphans[1000:2000]]},
+            {"Contents": [{"Key": k} for k in orphans[2000:2500]]},
+        ]
+        paginator = MagicMock()
+        paginator.paginate.return_value = pages
+        client.get_paginator.return_value = paginator
+
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Single now"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        # Every delete batch must be <= 1000 keys, and all 2500 orphans deleted.
+        batch_sizes = [
+            len(c.kwargs["Delete"]["Objects"]) for c in client.delete_objects.call_args_list
+        ]
+        assert all(n <= 1000 for n in batch_sizes)
+        assert sum(batch_sizes) == 2500
+
+    def test_list_uses_page_prefix(self):
+        # Cross-page safety also relies on scoping the list to the page prefix.
+        client = _make_s3_client(existing_keys=[])
+        upload_page(
+            client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+            kms_key_arn=_TEST_KMS_KEY_ARN,
+        )
+        paginate_call = client.get_paginator.return_value.paginate.call_args
+        assert paginate_call.kwargs["Prefix"] == "confluence/OPS/12345"
+
+    def test_partial_delete_errors_are_logged_and_not_counted(self, caplog):
+        import logging
+
+        existing = [
+            "confluence/OPS/12345_chunk_0.md",
+            "confluence/OPS/12345_chunk_1.md",
+        ]
+        client = _make_s3_client(existing_keys=existing)
+        # S3 reports one key failed to delete (Quiet mode returns only Errors).
+        client.delete_objects.return_value = {
+            "Errors": [{"Key": "confluence/OPS/12345_chunk_1.md", "Code": "AccessDenied"}]
+        }
+        with caplog.at_level(logging.INFO, logger="ckn_ingestion.s3_uploader"):
+            upload_page(
+                client, "123456789012", "OPS", "12345", ["# Content"], _make_sidecar(),
+                kms_key_arn=_TEST_KMS_KEY_ARN,
+            )
+        # The failed key is logged, and the count reflects only the 1 success.
+        assert "AccessDenied" in caplog.text
+        assert "ORPHANS_DELETED page_id=12345 count=1" in caplog.text
 
     def test_content_failure_logs_error_type(self, caplog):
         client = _make_s3_client()
