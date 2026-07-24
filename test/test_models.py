@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ckn_ingestion.models import (
     FALLBACK_CLASSIFICATION,
     VALID_DOC_TYPES,
@@ -10,6 +12,7 @@ from ckn_ingestion.models import (
     Classification,
     MetadataSidecar,
     PageContent,
+    normalize_vocab,
 )
 
 
@@ -19,6 +22,50 @@ class TestConstants:
 
     def test_valid_severity_exact_set(self):
         assert VALID_SEVERITY == {"sev1", "sev2", "all"}
+
+
+class TestNormalizeVocab:
+    """F6: canonicalize free-text classification fields for reliable filtering."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # Casing / spacing / separator drift observed in the real corpus
+            ("System Operations", "system-operations"),
+            ("system operations", "system-operations"),
+            ("network_security", "network-security"),
+            ("Network Security", "network-security"),
+            ("network-security", "network-security"),
+            ("DevOps", "devops"),
+            ("SRE", "sre"),
+            ("platform-engineering", "platform-engineering"),
+            ("  Data  Engineering  ", "data-engineering"),
+            ("Step Functions", "step-functions"),
+            # Sentinels / canonical values pass through unchanged
+            ("general", "general"),
+            ("unknown", "unknown"),
+        ],
+    )
+    def test_normalization_cases(self, raw, expected):
+        assert normalize_vocab(raw) == expected
+
+    def test_idempotent(self):
+        for raw in ["System Operations", "network_security", "GTIO — Platform", "sre"]:
+            once = normalize_vocab(raw)
+            assert normalize_vocab(once) == once
+
+    def test_empty_and_whitespace_become_unknown(self):
+        assert normalize_vocab("") == "unknown"
+        assert normalize_vocab("   ") == "unknown"
+
+    def test_output_is_a_valid_filter_key(self):
+        # Every output matches ^[a-z0-9-]+$ (no spaces, no uppercase, no stray punctuation)
+        import re
+
+        for raw in ["System Operations", "GTIO — Platform", "a/b\\c", "Team (Prod)!"]:
+            out = normalize_vocab(raw)
+            assert re.fullmatch(r"[a-z0-9-]+", out), out
+            assert not out.startswith("-") and not out.endswith("-")
 
 
 class TestFallbackClassification:

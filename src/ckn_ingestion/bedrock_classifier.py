@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from ckn_ingestion.models import (
+    _NORMALIZED_FIELDS,
     FALLBACK_CLASSIFICATION,
     VALID_DOC_TYPES,
     VALID_SEVERITY,
     Classification,
+    normalize_vocab,
 )
 from ckn_ingestion.retry import retry_with_backoff
 
@@ -174,11 +176,17 @@ def parse_classification(raw_json: str) -> Classification:
             f"Must be one of {sorted(VALID_SEVERITY)}"
         )
 
+    # F6: normalize the free-text fields (_NORMALIZED_FIELDS: owner_team,
+    # service) to a canonical lowercase, hyphen-separated form so equality
+    # filters at query time are reliable. doc_type/severity are already closed
+    # enums; region and summary are left verbatim (region casing is
+    # conventionally lowercase already, and summary is prose, not a filter key).
+    normalized = {field: normalize_vocab(data[field]) for field in _NORMALIZED_FIELDS}
     return Classification(
         doc_type=data["doc_type"],
-        service=data["service"],
+        service=normalized["service"],
         severity_relevance=data["severity_relevance"],
-        owner_team=data["owner_team"],
+        owner_team=normalized["owner_team"],
         region=data["region"],
         summary=data["summary"],
     )

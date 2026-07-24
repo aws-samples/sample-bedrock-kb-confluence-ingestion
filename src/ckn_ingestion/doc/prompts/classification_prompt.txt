@@ -5,9 +5,9 @@ Do not include any text before or after the JSON object. Start your response wit
 
 Required fields:
 - doc_type: one of "runbook", "architecture", "postmortem", "contact", "reference"
-- service: primary AWS service (e.g. "rds", "eks", "lambda", "networking", "s3", "ec2", "iam", "cloudwatch") or "general" if multi-service or unclear
+- service: primary AWS service (e.g. "rds", "eks", "lambda", "networking", "s3", "ec2", "iam", "cloudwatch") or "general" if multi-service or unclear. Use lowercase, hyphen-separated form (e.g. "step-functions", not "Step Functions").
 - severity_relevance: one of "sev1", "sev2", "all"
-- owner_team: team responsible for this document, inferred from content or Confluence space name. Use "unknown" if not determinable.
+- owner_team: team responsible for this document, inferred from content or Confluence space name. Use "unknown" if not determinable. Use lowercase, hyphen-separated form (e.g. "platform-engineering", not "Platform Engineering").
 - region: primary AWS region (e.g. "us-east-1") or "all" if region-agnostic
 - summary: 2-3 sentences describing what an incident responder would find useful in this document. Focus on actionable content, not document structure.
 

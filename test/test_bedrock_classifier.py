@@ -14,6 +14,7 @@ from ckn_ingestion.models import (
     VALID_DOC_TYPES,
     VALID_SEVERITY,
     Classification,
+    normalize_vocab,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,6 +82,39 @@ class TestParseClassificationValid:
         data["unexpected_field"] = "should be ignored"
         result = parse_classification(json.dumps(data))
         assert result.doc_type == "runbook"
+
+
+class TestParseClassificationNormalization:
+    """F6: parse_classification normalizes the free-text owner_team/service
+    fields so equality filters at query time are reliable."""
+
+    def test_owner_team_normalized(self):
+        data = _make_valid_classification_dict(owner_team="System Operations")
+        result = parse_classification(json.dumps(data))
+        assert result.owner_team == "system-operations"
+
+    def test_service_normalized(self):
+        data = _make_valid_classification_dict(service="Step Functions")
+        result = parse_classification(json.dumps(data))
+        assert result.service == "step-functions"
+
+    def test_underscore_variant_normalized(self):
+        data = _make_valid_classification_dict(owner_team="network_security")
+        result = parse_classification(json.dumps(data))
+        assert result.owner_team == "network-security"
+
+    def test_already_canonical_unchanged(self):
+        data = _make_valid_classification_dict(owner_team="platform-engineering", service="rds")
+        result = parse_classification(json.dumps(data))
+        assert result.owner_team == "platform-engineering"
+        assert result.service == "rds"
+
+    def test_doc_type_and_region_not_hyphenated(self):
+        # doc_type is a closed enum (must stay verbatim); region is left as-is.
+        data = _make_valid_classification_dict(doc_type="runbook", region="us-east-1")
+        result = parse_classification(json.dumps(data))
+        assert result.doc_type == "runbook"
+        assert result.region == "us-east-1"
 
 
 # ---------------------------------------------------------------------------
@@ -500,14 +534,16 @@ class TestBugConditionExploration:
 
         result = parse_classification(wrapped)
 
-        # Assert result is a valid Classification with correct field values
+        # Assert result is a valid Classification with correct field values.
+        # owner_team/service are normalized (F6), so compare against the
+        # normalized form of the input rather than the raw value.
         assert isinstance(result, Classification)
         assert result.doc_type == data["doc_type"]
         assert result.doc_type in VALID_DOC_TYPES
-        assert result.service == data["service"]
+        assert result.service == normalize_vocab(data["service"])
         assert result.severity_relevance == data["severity_relevance"]
         assert result.severity_relevance in VALID_SEVERITY
-        assert result.owner_team == data["owner_team"]
+        assert result.owner_team == normalize_vocab(data["owner_team"])
         assert result.region == data["region"]
         assert result.summary == data["summary"]
 
@@ -588,11 +624,12 @@ class TestPreservationProperties:
         raw_json = json.dumps(data)
         result = parse_classification(raw_json)
 
+        # owner_team/service are normalized (F6); the rest round-trip verbatim.
         assert isinstance(result, Classification)
         assert result.doc_type == data["doc_type"]
-        assert result.service == data["service"]
+        assert result.service == normalize_vocab(data["service"])
         assert result.severity_relevance == data["severity_relevance"]
-        assert result.owner_team == data["owner_team"]
+        assert result.owner_team == normalize_vocab(data["owner_team"])
         assert result.region == data["region"]
         assert result.summary == data["summary"]
 
