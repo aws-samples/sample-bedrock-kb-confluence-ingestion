@@ -338,6 +338,62 @@ class TestRunCompletionMarker:
 
 
 # ---------------------------------------------------------------------------
+# Concurrency guard — F1: skip overlapping runs
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrencyGuard:
+    """The guard short-circuits a real run when another task is already
+    running, but must not interfere with dry runs or the normal path.
+    """
+
+    def test_guard_trips_skips_crawl(self):
+        config = _make_config(spaces=["SPACE1"])
+        extract_mock = MagicMock(return_value=iter([]))
+        with (
+            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.another_run_in_progress", return_value=True),
+            patch("ckn_ingestion.cli.get_confluence_token") as token_mock,
+            patch("ckn_ingestion.cli.extract_pages", extract_mock),
+            patch("boto3.client", return_value=MagicMock()),
+        ):
+            cli_module.main([])
+        # Guard tripped before token fetch / crawl.
+        token_mock.assert_not_called()
+        extract_mock.assert_not_called()
+
+    def test_guard_clear_runs_normally(self):
+        config = _make_config(spaces=["SPACE1"])
+        extract_mock = MagicMock(return_value=iter([]))
+        with (
+            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.another_run_in_progress", return_value=False),
+            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
+            patch("ckn_ingestion.cli.extract_pages", extract_mock),
+            patch("boto3.client", return_value=MagicMock()),
+        ):
+            cli_module.main([])
+        extract_mock.assert_called_once()
+
+    def test_dry_run_bypasses_guard(self):
+        config = _make_config(spaces=["SPACE1"])
+        extract_mock = MagicMock(return_value=iter([]))
+        guard_mock = MagicMock(return_value=True)
+        with (
+            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.another_run_in_progress", guard_mock),
+            patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
+            patch("ckn_ingestion.cli.extract_pages", extract_mock),
+            patch("boto3.client", return_value=MagicMock()),
+        ):
+            cli_module.main(["--dry-run"])
+        # Dry runs never consult the guard and always crawl.
+        guard_mock.assert_not_called()
+        extract_mock.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Flatten / Split integration in the pipeline
 # ---------------------------------------------------------------------------
 
