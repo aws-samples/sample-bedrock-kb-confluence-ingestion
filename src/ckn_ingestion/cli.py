@@ -287,7 +287,9 @@ def _run(args: argparse.Namespace) -> None:
                 chunks = [build_oversize_placeholder(page, classification)]
             else:
                 try:
-                    flattened_markdown = flatten_tables(enriched_markdown, page.title)
+                    flattened_markdown = flatten_tables(
+                        enriched_markdown, page.title, source_url=page.url
+                    )
                     chunks = split_markdown(flattened_markdown, page.title)
                 except Exception as exc:
                     logger.error(
