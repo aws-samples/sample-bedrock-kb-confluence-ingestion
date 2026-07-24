@@ -232,3 +232,86 @@ class TestTitlePrefix:
         result = split_markdown(md, title)
         for chunk in result:
             assert chunk.startswith(prefix)
+
+
+# ---------------------------------------------------------------------------
+# Intra-section size cap (F9 Option A prerequisite, issue #20)
+# ---------------------------------------------------------------------------
+
+
+class TestSizeCap:
+    def _reassemble(self, chunks: list[str], title: str) -> str:
+        """Reconstruct the prefixed original from chunks (strip prefix on 1..N)."""
+        prefix = f"# {title}\n\n"
+        parts = [chunks[0]] + [c[len(prefix) :] for c in chunks[1:]]
+        return "".join(parts)
+
+    def test_small_input_not_split_by_cap(self):
+        md = "# A\n\nshort\n\n# B\n\nalso short\n"
+        result = split_markdown(md, TITLE, max_chunk_chars=20_000)
+        # 2 headings, both tiny → 2 chunks, cap has no effect
+        assert len(result) == 2
+
+    def test_headingless_oversize_page_is_split(self):
+        # No headings at all: previously one chunk regardless of size.
+        body = "\n\n".join([f"Paragraph {i} " + "x" * 200 for i in range(50)])
+        cap = 2_000
+        result = split_markdown(body, TITLE, max_chunk_chars=cap)
+        assert len(result) > 1
+        for chunk in result:
+            assert len(chunk) <= cap
+            assert chunk.startswith(PREFIX)
+
+    def test_single_oversize_section_is_split(self):
+        # One H1 section whose body far exceeds the cap.
+        big = "# Big Section\n\n" + "\n\n".join("word " * 100 for _ in range(40))
+        small = "# Small\n\ntiny body\n"
+        md = big + "\n\n" + small
+        cap = 3_000
+        result = split_markdown(md, TITLE, max_chunk_chars=cap)
+        for chunk in result:
+            assert len(chunk) <= cap
+            assert chunk.startswith(PREFIX)
+
+    def test_oversize_split_preserves_content(self):
+        # Round-trip: reassembling chunks reproduces "# TITLE\n\n" + original.
+        body = "\n\n".join([f"Para {i}: " + "data " * 80 for i in range(30)])
+        cap = 2_500
+        result = split_markdown(body, TITLE, max_chunk_chars=cap)
+        assert self._reassemble(result, TITLE) == PREFIX + body
+
+    def test_single_paragraph_larger_than_cap_hard_split(self):
+        # A single unbroken paragraph bigger than the cap must still be split
+        # and never exceed it.
+        body = "z" * 10_000
+        cap = 1_500
+        result = split_markdown(body, TITLE, max_chunk_chars=cap)
+        assert len(result) > 1
+        for chunk in result:
+            assert len(chunk) <= cap
+            assert chunk.startswith(PREFIX)
+        # Content preserved despite hard-splitting.
+        assert self._reassemble(result, TITLE) == PREFIX + body
+
+    def test_every_oversize_chunk_within_cap(self):
+        md = (
+            "# Section One\n\n" + "alpha " * 500 + "\n\n"
+            "# Section Two\n\n" + "beta " * 500 + "\n\n"
+            "# Section Three\n\n" + "gamma " * 500
+        )
+        cap = 1_800
+        result = split_markdown(md, TITLE, max_chunk_chars=cap)
+        for chunk in result:
+            assert len(chunk) <= cap
+
+    def test_oversize_whitespace_only_input_is_capped(self):
+        # Pathological: a whitespace run longer than the cap must NOT bypass
+        # the size cap via the empty/whitespace early-return.
+        md = " " * 30_000
+        cap = 5_000
+        result = split_markdown(md, TITLE, max_chunk_chars=cap)
+        for chunk in result:
+            assert len(chunk) <= cap
+            assert chunk.startswith(PREFIX)
+        # Content still preserved.
+        assert self._reassemble(result, TITLE) == PREFIX + md
