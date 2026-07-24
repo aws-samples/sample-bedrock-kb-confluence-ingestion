@@ -292,6 +292,52 @@ class TestUploadFailure:
 
 
 # ---------------------------------------------------------------------------
+# Run-completion marker — F4 operational alerting heartbeat
+# ---------------------------------------------------------------------------
+
+
+class TestRunCompletionMarker:
+    """The end-of-run marker `INGESTION_RUN_COMPLETE` drives the CloudWatch
+    absence-of-success (heartbeat) alarm. It must be emitted on a clean run and
+    suppressed on dry runs and on runs with upload failures.
+    """
+
+    _MARKER = "INGESTION_RUN_COMPLETE"
+
+    def _run_and_capture(self, argv, *, upload_side_effect=None, caplog):
+        config = _make_config(spaces=["SPACE1"])
+        page = _make_page()
+        with (
+            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
+            patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
+            patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
+            patch("ckn_ingestion.cli.classify_page", return_value=_make_classification()),
+            patch("ckn_ingestion.cli.enrich_metadata", return_value=MagicMock()),
+            patch("ckn_ingestion.cli.upload_page", side_effect=upload_side_effect),
+            patch("boto3.client", return_value=MagicMock()),
+            caplog.at_level("INFO", logger="ckn_ingestion.cli"),
+        ):
+            cli_module.main(argv)
+        return caplog.text
+
+    def test_marker_emitted_on_clean_run(self, caplog):
+        text = self._run_and_capture([], caplog=caplog)
+        assert self._MARKER in text
+
+    def test_marker_suppressed_on_dry_run(self, caplog):
+        text = self._run_and_capture(["--dry-run"], caplog=caplog)
+        assert self._MARKER not in text
+
+    def test_marker_suppressed_on_upload_failure(self, caplog):
+        text = self._run_and_capture(
+            [], upload_side_effect=RuntimeError("S3 error"), caplog=caplog
+        )
+        assert self._MARKER not in text
+
+
+# ---------------------------------------------------------------------------
 # Flatten / Split integration in the pipeline
 # ---------------------------------------------------------------------------
 

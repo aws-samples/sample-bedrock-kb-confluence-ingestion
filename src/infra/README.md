@@ -9,6 +9,8 @@
 - Execution Role (ECR pull + CloudWatch Logs)
 - EventBridge scheduled rule (daily 02:00 UTC)
 - CloudWatch log group (`/ckn/ingestion`)
+- Operational CloudWatch alarms (run-failure + absence-of-success heartbeat)
+  wired to the security-alerts SNS topic (see `lib/operational-alarms.ts`)
 - OpenSearch Serverless collection (`ckn-kb-vectors`) + security policies
 - Bedrock KB execution role (`ckn-bedrock-kb-role`)
 - Bedrock Knowledge Base + S3 data source — only when deployed with
