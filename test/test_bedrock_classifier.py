@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ckn_ingestion.bedrock_classifier import classify_page, parse_classification
+from ckn_ingestion.bedrock_classifier import _MODEL_ID, classify_page, parse_classification
 from ckn_ingestion.models import (
     FALLBACK_CLASSIFICATION,
     VALID_DOC_TYPES,
@@ -246,7 +246,9 @@ class TestClassifyPageHappyPath:
 
         client.invoke_model.assert_called_once()
         call_kwargs = client.invoke_model.call_args[1]
-        assert call_kwargs["modelId"] == "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        # Assert against the module constant so a future model bump doesn't
+        # re-stale this test (the pipeline uses a cross-region inference profile).
+        assert call_kwargs["modelId"] == _MODEL_ID
         assert call_kwargs["contentType"] == "application/json"
         assert call_kwargs["accept"] == "application/json"
 
@@ -430,21 +432,18 @@ class TestClassifyPageThrottleRetry:
 
         assert "Critical Page Title" in caplog.text
 
-    def test_non_throttling_exception_propagates(self):
-        """Non-throttling exceptions from invoke_model propagate out of classify_page."""
+    def test_non_throttling_exception_yields_fallback(self):
+        """A non-throttling exception from invoke_model does NOT propagate — classify_page
+        catches it and returns FALLBACK_CLASSIFICATION so a single bad page can't abort the
+        whole ingestion run (see classify_page's broad `except Exception` fail-safe)."""
         client = MagicMock()
         client.invoke_model.side_effect = RuntimeError("Unexpected error")
 
-        # RuntimeError is not a ThrottlingException, so retry_with_backoff re-raises it.
-        # classify_page only catches the _ThrottlingException wrapper exhaustion — other
-        # exceptions propagate to the caller.
-        with pytest.raises(RuntimeError, match="Unexpected error"):
-            # Bypass the throttle-retry wrapper so the raw exception propagates
-            with patch(
-                "ckn_ingestion.bedrock_classifier._call_with_throttle_retry",
-                side_effect=lambda fn: fn(),
-            ):
-                classify_page("Some Page", "Content.", client)
+        # RuntimeError is not a ThrottlingException, so _call_with_throttle_retry re-raises
+        # it immediately; classify_page's generic handler then applies the fallback.
+        result = classify_page("Some Page", "Content.", client)
+
+        assert result == FALLBACK_CLASSIFICATION
 
 
 # ---------------------------------------------------------------------------
