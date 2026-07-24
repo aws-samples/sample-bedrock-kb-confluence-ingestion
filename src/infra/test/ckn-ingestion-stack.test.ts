@@ -9,14 +9,15 @@ import { CknIngestionStack } from '../lib/ckn-ingestion-stack';
  */
 function synthesizeTemplate(
   accountId: string,
-  opts: { deployKb?: boolean } = {},
+  opts: { deployKb?: boolean; configSource?: 'ssm' | 's3' } = {},
 ): Record<string, any> {
   // The Bedrock KB + S3 data source are gated behind the `deployKb` context
   // (two-phase deploy). Tests that assert on KB/DataSource resources must
   // synthesize with it enabled, or those resources are absent from the template.
-  const app = new cdk.App({
-    context: opts.deployKb ? { deployKb: 'true' } : {},
-  });
+  const context: Record<string, string> = {};
+  if (opts.deployKb) context.deployKb = 'true';
+  if (opts.configSource) context.configSource = opts.configSource;
+  const app = new cdk.App({ context });
 
   const stack = new CknIngestionStack(app, 'TestStack', {
     env: { account: accountId, region: 'us-east-1' },
@@ -332,6 +333,120 @@ describe('Task role S3 orphan-cleanup permissions (F2)', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Externalized config store (--context configSource=ssm|s3)
+// ---------------------------------------------------------------------------
+
+describe('Externalized config store', () => {
+  function taskRoleStatements(template: Record<string, any>): any[] {
+    const roles = findResources(template, 'AWS::IAM::Role');
+    const taskRoleEntry = roles.find(
+      ([, r]) => r.Properties?.RoleName === 'ckn-ingestion-task-role',
+    );
+    expect(taskRoleEntry).toBeDefined();
+    const [taskRoleLogicalId] = taskRoleEntry!;
+
+    // Inline policies on the role itself.
+    const inline = (taskRoleEntry![1].Properties?.Policies ?? []).flatMap(
+      (p: any) => p.PolicyDocument?.Statement ?? [],
+    );
+
+    // Statements added via role.addToPolicy() land in a standalone
+    // AWS::IAM::Policy (the "DefaultPolicy") whose Roles reference the task role.
+    const attached = findResources(template, 'AWS::IAM::Policy')
+      .filter(([, p]) =>
+        (p.Properties?.Roles ?? []).some(
+          (r: any) => r?.Ref === taskRoleLogicalId,
+        ),
+      )
+      .flatMap(([, p]) => p.Properties?.PolicyDocument?.Statement ?? []);
+
+    return [...inline, ...attached];
+  }
+
+  function ingestionContainerEnv(template: Record<string, any>): any[] {
+    const taskDefs = findResources(template, 'AWS::ECS::TaskDefinition');
+    const td = taskDefs.find(([, res]) => res.Properties?.Family === 'ckn-ingestion');
+    expect(td).toBeDefined();
+    const containers = td![1].Properties?.ContainerDefinitions ?? [];
+    const c = containers.find((cd: any) => cd.Name === 'ckn-ingestion');
+    return c?.Environment ?? [];
+  }
+
+  describe('default (no configSource)', () => {
+    const template = synthesizeTemplate('123456789012');
+
+    it('provisions no SSM parameter', () => {
+      expect(findResources(template, 'AWS::SSM::Parameter').length).toBe(0);
+    });
+
+    it('sets no config-source env var on the ingestion container', () => {
+      const names = ingestionContainerEnv(template).map((e: any) => e.Name);
+      expect(names).not.toContain('CKN_CONFIG_SSM_PARAM');
+      expect(names).not.toContain('CKN_CONFIG_S3_URI');
+    });
+
+    it('grants no ssm:GetParameter to the task role', () => {
+      const acts = taskRoleStatements(template)
+        .flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]));
+      expect(acts).not.toContain('ssm:GetParameter');
+    });
+  });
+
+  describe('configSource=ssm', () => {
+    const template = synthesizeTemplate('123456789012', { configSource: 'ssm' });
+
+    it('provisions an SSM parameter for the config', () => {
+      const params = findResources(template, 'AWS::SSM::Parameter');
+      expect(params.length).toBe(1);
+      expect(params[0][1].Properties.Name).toBe('/ckn/client-config');
+    });
+
+    it('grants ssm:GetParameter scoped to that parameter (not "*")', () => {
+      const stmt = taskRoleStatements(template).find((s) => s.Sid === 'ConfigSsmRead');
+      expect(stmt).toBeDefined();
+      const acts = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
+      expect(acts).toContain('ssm:GetParameter');
+      expect(stmt.Resource).not.toBe('*');
+      // The ARN is an Fn::Join that ends in :parameter + Ref(configParam), so it
+      // is scoped to that specific parameter (not "*"). Assert both the
+      // :parameter segment and the Ref to the config parameter resource appear.
+      const resourceStr = JSON.stringify(stmt.Resource);
+      expect(resourceStr).toContain(':parameter');
+      expect(resourceStr).toContain('CknConfigParam');
+    });
+
+    it('sets CKN_CONFIG_SSM_PARAM on the ingestion container', () => {
+      const env = ingestionContainerEnv(template);
+      const v = env.find((e: any) => e.Name === 'CKN_CONFIG_SSM_PARAM');
+      expect(v?.Value).toBe('/ckn/client-config');
+    });
+  });
+
+  describe('configSource=s3', () => {
+    const template = synthesizeTemplate('123456789012', { configSource: 's3' });
+
+    it('provisions no SSM parameter (reuses the ingestion bucket)', () => {
+      expect(findResources(template, 'AWS::SSM::Parameter').length).toBe(0);
+    });
+
+    it('grants s3:GetObject scoped to the config key only', () => {
+      const stmt = taskRoleStatements(template).find((s) => s.Sid === 'ConfigS3Read');
+      expect(stmt).toBeDefined();
+      const acts = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
+      expect(acts).toContain('s3:GetObject');
+      expect(stmt.Resource).not.toBe('*');
+      expect(JSON.stringify(stmt.Resource)).toContain('config/client.json');
+    });
+
+    it('sets CKN_CONFIG_S3_URI on the ingestion container', () => {
+      const env = ingestionContainerEnv(template);
+      const names = env.map((e: any) => e.Name);
+      expect(names).toContain('CKN_CONFIG_S3_URI');
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Task 5.3: Unit tests for Bedrock KB configuration

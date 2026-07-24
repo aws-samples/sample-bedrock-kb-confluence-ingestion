@@ -7,6 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import ckn_ingestion.cli as cli_module
+from ckn_ingestion.config import ConfigSource
+
+_FILE_SRC = ConfigSource("file", "./client.json")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -96,8 +99,8 @@ class TestSpaceValidation:
         """Run main() with all external dependencies mocked."""
         pages = pages or []
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter(pages)),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -116,7 +119,7 @@ class TestSpaceValidation:
     def test_invalid_space_exits_nonzero(self):
         config = _make_config(spaces=["SPACE1", "SPACE2"])
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
             patch("boto3.client", return_value=MagicMock()),
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -128,8 +131,8 @@ class TestSpaceValidation:
         extract_mock = MagicMock(return_value=iter([]))
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", extract_mock),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -160,8 +163,8 @@ class TestDryRun:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -179,8 +182,8 @@ class TestDryRun:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([])),
             patch("boto3.client", return_value=MagicMock()),
@@ -202,8 +205,8 @@ class TestSuccessfulRun:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -224,8 +227,8 @@ class TestSuccessfulRun:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([])),
             patch("boto3.client", return_value=MagicMock()),
@@ -247,8 +250,8 @@ class TestUploadFailure:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -278,8 +281,8 @@ class TestUploadFailure:
         update_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced", update_mock),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source", update_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page1, page2])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -310,8 +313,8 @@ class TestRunCompletionMarker:
         config = _make_config(spaces=["SPACE1"])
         page = _make_page()
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -353,7 +356,7 @@ class TestConcurrencyGuard:
         config = _make_config(spaces=["SPACE1"])
         extract_mock = MagicMock(return_value=iter([]))
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
             patch("ckn_ingestion.cli.another_run_in_progress", return_value=True),
             patch("ckn_ingestion.cli.get_confluence_token") as token_mock,
             patch("ckn_ingestion.cli.extract_pages", extract_mock),
@@ -368,9 +371,9 @@ class TestConcurrencyGuard:
         config = _make_config(spaces=["SPACE1"])
         extract_mock = MagicMock(return_value=iter([]))
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
             patch("ckn_ingestion.cli.another_run_in_progress", return_value=False),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", extract_mock),
             patch("boto3.client", return_value=MagicMock()),
@@ -383,7 +386,7 @@ class TestConcurrencyGuard:
         extract_mock = MagicMock(return_value=iter([]))
         guard_mock = MagicMock(return_value=True)
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
             patch("ckn_ingestion.cli.another_run_in_progress", guard_mock),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", extract_mock),
@@ -433,8 +436,8 @@ class TestFlattenSplitIntegration:
         enrich_mock = MagicMock(return_value=MagicMock())
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -505,8 +508,8 @@ class TestFlattenSplitIntegration:
         page = _make_page()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value="# enriched"),
@@ -543,8 +546,8 @@ class TestSizePolicyIntegration:
         upload_mock = MagicMock()
 
         with (
-            patch("ckn_ingestion.cli.load_config", return_value=config),
-            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.resolve_config", return_value=(config, _FILE_SRC)),
+            patch("ckn_ingestion.cli.update_last_synced_source"),
             patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
             patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
             patch("ckn_ingestion.cli.process_page_images", return_value=enriched),

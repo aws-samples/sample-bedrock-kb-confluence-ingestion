@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 import uuid
@@ -17,7 +18,12 @@ from pythonjsonlogger import jsonlogger
 
 from ckn_ingestion.bedrock_classifier import classify_page
 from ckn_ingestion.concurrency import another_run_in_progress
-from ckn_ingestion.config import load_config, update_last_synced
+from ckn_ingestion.config import (
+    ENV_S3_URI,
+    ENV_SSM_PARAM,
+    resolve_config,
+    update_last_synced_source,
+)
 from ckn_ingestion.confluence_extractor import extract_pages, get_confluence_token
 from ckn_ingestion.content_splitter import split_markdown
 from ckn_ingestion.image_processor import PROCESSABLE_MEDIA_TYPES, process_page_images
@@ -181,17 +187,22 @@ def main(argv: list[str] | None = None) -> None:
 def _run(args: argparse.Namespace) -> None:
     """Inner orchestration loop — separated for centralized error handling."""
 
-    # 3. Load config (with payload size guard)
+    # 3. Load config. Source is resolved in priority order (SSM param, S3
+    #    object, then local file) so the image can be config-agnostic. The 1 MB
+    #    payload guard applies to the local-file source (the externalized
+    #    sources are size-bounded by SSM/S3 themselves).
     config_path = Path(args.config)
-    config_size = config_path.stat().st_size
-    if config_size > 1 * 1024 * 1024:  # 1 MB
-        logger.error("Config file too large (%d bytes); max 1 MB.", config_size)
-        sys.exit(1)
+    using_external = bool(os.environ.get(ENV_SSM_PARAM) or os.environ.get(ENV_S3_URI))
+    if not using_external:
+        config_size = config_path.stat().st_size
+        if config_size > 1 * 1024 * 1024:  # 1 MB
+            logger.error("Config file too large (%d bytes); max 1 MB.", config_size)
+            sys.exit(1)
 
     try:
-        config = load_config(config_path)
+        config, config_source = resolve_config(config_path)
     except Exception as exc:
-        logger.error("Failed to load config from '%s': %s", config_path, type(exc).__name__)
+        logger.error("Failed to load config: %s", type(exc).__name__)
         sys.exit(1)
 
     # 4. Validate --space if provided
@@ -347,8 +358,8 @@ def _run(args: argparse.Namespace) -> None:
     if not args.dry_run and not upload_failed:
         timestamp = datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
         try:
-            update_last_synced(config_path, timestamp)
-            logger.info("Updated kb_last_synced to %s", timestamp)
+            if update_last_synced_source(config_source, timestamp):
+                logger.info("Updated kb_last_synced to %s", timestamp)
         except Exception as exc:
             logger.error("Failed to update kb_last_synced: %s", type(exc).__name__)
 

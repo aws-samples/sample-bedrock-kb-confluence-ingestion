@@ -7,7 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from ckn_ingestion.config import AppConfig, load_config, update_last_synced
+from unittest import mock
+
+from ckn_ingestion.config import (
+    AppConfig,
+    ConfigSource,
+    load_config,
+    resolve_config,
+    update_last_synced,
+    update_last_synced_source,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,3 +171,123 @@ class TestUpdateLastSynced:
 
         with pytest.raises((FileNotFoundError, OSError)):
             update_last_synced(missing, "2024-01-01T00:00:00Z")
+
+
+# ---------------------------------------------------------------------------
+# resolve_config — externalized config sources (SSM / S3 / file)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_env(monkeypatch):
+    """Ensure no externalized-source env vars leak between tests."""
+    for var in ("CKN_CONFIG_SSM_PARAM", "CKN_CONFIG_S3_URI", "CKN_CONFIG_PATH"):
+        monkeypatch.delenv(var, raising=False)
+
+
+class TestResolveConfig:
+    def test_defaults_to_local_file(self, tmp_path):
+        path = _write_client_json(tmp_path, _valid_payload())
+        cfg, source = resolve_config(path)
+
+        assert isinstance(cfg, AppConfig)
+        assert source == ConfigSource("file", str(path))
+
+    def test_ckn_config_path_env_overrides_default(self, tmp_path, monkeypatch):
+        path = _write_client_json(tmp_path, _valid_payload(kb_id="from-env-path"))
+        monkeypatch.setenv("CKN_CONFIG_PATH", str(path))
+
+        cfg, source = resolve_config(tmp_path / "does-not-exist.json")
+        assert cfg.kb_id == "from-env-path"
+        assert source == ConfigSource("file", str(path))
+
+    def test_loads_from_ssm_when_env_set(self, monkeypatch):
+        monkeypatch.setenv("CKN_CONFIG_SSM_PARAM", "/ckn/test/client-config")
+        payload = json.dumps(_valid_payload(kb_id="from-ssm"))
+
+        fake_ssm = mock.Mock()
+        fake_ssm.get_parameter.return_value = {"Parameter": {"Value": payload}}
+        with mock.patch("boto3.client", return_value=fake_ssm) as mk:
+            cfg, source = resolve_config(Path("/unused/client.json"))
+
+        mk.assert_called_once_with("ssm")
+        fake_ssm.get_parameter.assert_called_once_with(
+            Name="/ckn/test/client-config", WithDecryption=True
+        )
+        assert cfg.kb_id == "from-ssm"
+        assert source == ConfigSource("ssm", "/ckn/test/client-config")
+
+    def test_loads_from_s3_when_env_set(self, monkeypatch):
+        monkeypatch.setenv("CKN_CONFIG_S3_URI", "s3://my-bucket/config/client.json")
+        payload = json.dumps(_valid_payload(kb_id="from-s3")).encode("utf-8")
+
+        body = mock.Mock()
+        body.read.return_value = payload
+        fake_s3 = mock.Mock()
+        fake_s3.get_object.return_value = {"Body": body}
+        with mock.patch("boto3.client", return_value=fake_s3) as mk:
+            cfg, source = resolve_config(Path("/unused/client.json"))
+
+        mk.assert_called_once_with("s3")
+        fake_s3.get_object.assert_called_once_with(
+            Bucket="my-bucket", Key="config/client.json"
+        )
+        assert cfg.kb_id == "from-s3"
+        assert source == ConfigSource("s3", "s3://my-bucket/config/client.json")
+
+    def test_ssm_takes_priority_over_s3_and_file(self, tmp_path, monkeypatch):
+        # All three configured; SSM must win.
+        path = _write_client_json(tmp_path, _valid_payload(kb_id="from-file"))
+        monkeypatch.setenv("CKN_CONFIG_PATH", str(path))
+        monkeypatch.setenv("CKN_CONFIG_S3_URI", "s3://b/k.json")
+        monkeypatch.setenv("CKN_CONFIG_SSM_PARAM", "/ckn/p")
+
+        fake_ssm = mock.Mock()
+        fake_ssm.get_parameter.return_value = {
+            "Parameter": {"Value": json.dumps(_valid_payload(kb_id="from-ssm"))}
+        }
+        with mock.patch("boto3.client", return_value=fake_ssm):
+            cfg, source = resolve_config(path)
+
+        assert cfg.kb_id == "from-ssm"
+        assert source.kind == "ssm"
+
+    def test_malformed_s3_uri_raises_value_error(self, monkeypatch):
+        monkeypatch.setenv("CKN_CONFIG_S3_URI", "not-an-s3-uri")
+        with pytest.raises(ValueError, match="s3://"):
+            resolve_config(Path("/unused/client.json"))
+
+    def test_s3_uri_without_key_raises_value_error(self, monkeypatch):
+        monkeypatch.setenv("CKN_CONFIG_S3_URI", "s3://bucket-only")
+        with pytest.raises(ValueError, match="s3://"):
+            resolve_config(Path("/unused/client.json"))
+
+    def test_externalized_source_still_validates_payload(self, monkeypatch):
+        # A bad payload from SSM must fail the same validation as a file.
+        monkeypatch.setenv("CKN_CONFIG_SSM_PARAM", "/ckn/bad")
+        bad = _valid_payload()
+        del bad["kb_id"]
+        fake_ssm = mock.Mock()
+        fake_ssm.get_parameter.return_value = {"Parameter": {"Value": json.dumps(bad)}}
+        with mock.patch("boto3.client", return_value=fake_ssm):
+            with pytest.raises(ValueError, match="kb_id"):
+                resolve_config(Path("/unused/client.json"))
+
+
+class TestUpdateLastSyncedSource:
+    def test_file_source_writes_back(self, tmp_path):
+        path = _write_client_json(tmp_path, _valid_payload())
+        wrote = update_last_synced_source(ConfigSource("file", str(path)), "2024-08-01T00:00:00Z")
+
+        assert wrote is True
+        assert json.loads(path.read_text())["kb_last_synced"] == "2024-08-01T00:00:00Z"
+
+    def test_ssm_source_skips_write_back(self):
+        # No file to write; must not raise and must report skipped.
+        wrote = update_last_synced_source(ConfigSource("ssm", "/ckn/p"), "2024-08-01T00:00:00Z")
+        assert wrote is False
+
+    def test_s3_source_skips_write_back(self):
+        source = ConfigSource("s3", "s3://b/k.json")
+        wrote = update_last_synced_source(source, "2024-08-01T00:00:00Z")
+        assert wrote is False
