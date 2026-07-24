@@ -293,6 +293,45 @@ describe('Index Creator Fargate task definition', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// F2: task role has scoped S3 delete + list for orphan cleanup
+// ---------------------------------------------------------------------------
+
+describe('Task role S3 orphan-cleanup permissions (F2)', () => {
+  const template = synthesizeTemplate('123456789012');
+
+  function taskRoleStatements(): any[] {
+    const roles = findResources(template, 'AWS::IAM::Role');
+    const taskRole = roles.find(([, r]) => r.Properties?.RoleName === 'ckn-ingestion-task-role');
+    expect(taskRole).toBeDefined();
+    const policies = taskRole![1].Properties?.Policies ?? [];
+    return policies.flatMap((p: any) => p.PolicyDocument?.Statement ?? []);
+  }
+
+  it('grants s3:DeleteObject scoped to the confluence/ prefix only', () => {
+    const stmts = taskRoleStatements();
+    const del = stmts.find((s) => s.Sid === 'S3DeleteOrphans');
+    expect(del).toBeDefined();
+    const actions = Array.isArray(del.Action) ? del.Action : [del.Action];
+    expect(actions).toContain('s3:DeleteObject');
+    // Resource must be scoped to confluence/* — never the whole bucket or "*".
+    const resource = JSON.stringify(del.Resource);
+    expect(resource).toContain('confluence/*');
+    expect(del.Resource).not.toBe('*');
+  });
+
+  it('grants s3:ListBucket constrained by an s3:prefix condition', () => {
+    const stmts = taskRoleStatements();
+    const list = stmts.find((s) => s.Sid === 'S3ListForCleanup');
+    expect(list).toBeDefined();
+    const actions = Array.isArray(list.Action) ? list.Action : [list.Action];
+    expect(actions).toContain('s3:ListBucket');
+    // Must be gated by an s3:prefix condition (least privilege), not open.
+    const prefixCond = list.Condition?.StringLike?.['s3:prefix'];
+    expect(JSON.stringify(prefixCond)).toContain('confluence/*');
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // Task 5.3: Unit tests for Bedrock KB configuration
