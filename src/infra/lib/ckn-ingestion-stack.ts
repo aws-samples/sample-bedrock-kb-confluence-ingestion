@@ -6,6 +6,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -21,6 +22,28 @@ export class CknIngestionStack extends cdk.Stack {
     super(scope, id, props);
 
     const schedule = this.node.tryGetContext('schedule') ?? 'cron(0 2 * * ? *)';
+    // The daily ingestion schedule is ENABLED by default. Deployments that sync
+    // on demand (e.g. demo/clean-room accounts that trigger runs manually) can
+    // disable the rule without removing it via `--context scheduleEnabled=false`.
+    const scheduleEnabled = this.node.tryGetContext('scheduleEnabled') !== 'false';
+
+    // Optional externalized deployment config. By default `client.json` is baked
+    // into the image (one image per deployment). Set `--context configSource=ssm`
+    // or `configSource=s3` to instead have the container read config at runtime
+    // from SSM Parameter Store or an S3 object, so routine config edits (e.g.
+    // adding a space) no longer require an image rebuild. The app resolves the
+    // source from the CKN_CONFIG_SSM_PARAM / CKN_CONFIG_S3_URI env vars set below
+    // (see config.py::resolve_config). Secrets are unaffected — the Confluence
+    // token stays in Secrets Manager.
+    const configSource = this.node.tryGetContext('configSource') as
+      | 'ssm'
+      | 's3'
+      | undefined;
+    if (configSource && configSource !== 'ssm' && configSource !== 's3') {
+      throw new Error(
+        `Invalid configSource context '${configSource}'. Use 'ssm', 's3', or omit it.`,
+      );
+    }
 
     // -----------------------------------------------------------------------
     // 1. ECR Repository
@@ -123,6 +146,26 @@ export class CknIngestionStack extends cdk.Stack {
               sid: 'BedrockEmbed',
               actions: ['bedrock:InvokeModel'],
               resources: [`arn:aws:bedrock:${this.region}::foundation-model/amazon.titan-embed-text-v2:0`],
+            }),
+            // Optional reranking: when a Retrieve call supplies a
+            // rerankingConfiguration, the Bedrock KB service assumes THIS role
+            // (session name BedrockReranking-*) to run the rerank model, so the
+            // permission belongs here on the KB service role — not on the caller.
+            // InvokeModel is scopable to the rerank model ARN. bedrock:Rerank,
+            // however, is an action-level permission that CANNOT be scoped to a
+            // resource: an ARN-scoped statement is denied (verified empirically
+            // against amazon.rerank-v1:0 — the scoped form returns AccessDenied
+            // on bedrock:Rerank, only Resource:"*" is accepted), so it must be
+            // Resource:"*". No other action is broadened.
+            new iam.PolicyStatement({
+              sid: 'BedrockRerankInvoke',
+              actions: ['bedrock:InvokeModel'],
+              resources: [`arn:aws:bedrock:${this.region}::foundation-model/amazon.rerank-v1:0`],
+            }),
+            new iam.PolicyStatement({
+              sid: 'BedrockRerank',
+              actions: ['bedrock:Rerank'],
+              resources: ['*'],
             }),
             new iam.PolicyStatement({
               sid: 'AossAccess',
@@ -511,6 +554,12 @@ export class CknIngestionStack extends cdk.Stack {
       const kb = new bedrock.CfnKnowledgeBase(this, 'CknKnowledgeBase', {
         name: 'ckn-knowledge-base',
         roleArn: kbRole.roleArn,
+        // Discovery tag for the awslabs bedrock-kb-retrieval MCP server, which
+        // only lists knowledge bases carrying mcp-multirag-kb=true. Declared here
+        // so the tag is reproducible from IaC rather than applied by hand.
+        tags: {
+          'mcp-multirag-kb': 'true',
+        },
         knowledgeBaseConfiguration: {
           type: 'VECTOR',
           vectorKnowledgeBaseConfiguration: {
@@ -565,6 +614,46 @@ export class CknIngestionStack extends cdk.Stack {
       });
     }
 
+    // -----------------------------------------------------------------------
+    // 10b. Optional externalized config store (SSM Parameter Store or S3)
+    //      Provisioned only when --context configSource is set. Grants the task
+    //      role a read permission scoped to the specific resource, and sets the
+    //      env var the app's config.resolve_config reads. The config VALUE is not
+    //      managed by CFN (operators write it out-of-band) so config edits never
+    //      touch the stack — an empty String parameter placeholder is created for
+    //      the SSM case so the ARN exists and is grantable.
+    // -----------------------------------------------------------------------
+    const containerEnv: Record<string, string> = {};
+
+    if (configSource === 'ssm') {
+      const configParamName = '/ckn/client-config';
+      const configParam = new ssm.StringParameter(this, 'CknConfigParam', {
+        parameterName: configParamName,
+        // Placeholder; operators overwrite with the real client.json JSON
+        // out-of-band. CFN does not manage the value after creation.
+        stringValue: '{}',
+        description: 'CKN deployment config (client.json JSON). Edit out-of-band; not managed by CFN.',
+      });
+      taskRole.addToPolicy(new iam.PolicyStatement({
+        sid: 'ConfigSsmRead',
+        actions: ['ssm:GetParameter'],
+        resources: [configParam.parameterArn],
+      }));
+      containerEnv.CKN_CONFIG_SSM_PARAM = configParamName;
+    } else if (configSource === 's3') {
+      // Reuse the existing (SSE-KMS) ingestion bucket; keep config under a
+      // dedicated prefix. The object itself is written out-of-band.
+      const configKey = 'config/client.json';
+      taskRole.addToPolicy(new iam.PolicyStatement({
+        sid: 'ConfigS3Read',
+        actions: ['s3:GetObject'],
+        resources: [`${bucket.bucketArn}/${configKey}`],
+      }));
+      // Reading an SSE-KMS object requires kms:Decrypt on the bucket key; the
+      // task role already has kms:Decrypt on kmsKey (see KMSDecrypt statement).
+      containerEnv.CKN_CONFIG_S3_URI = `s3://${bucket.bucketName}/${configKey}`;
+    }
+
     const taskDef = new ecs.FargateTaskDefinition(this, 'CknIngestionTaskDef', {
       family: 'ckn-ingestion', cpu: 4096, memoryLimitMiB: 16384, taskRole, executionRole,
     });
@@ -572,6 +661,7 @@ export class CknIngestionStack extends cdk.Stack {
       containerName: 'ckn-ingestion',
       image: ecs.ContainerImage.fromEcrRepository(repo, 'latest'),
       command: ['python', '-m', 'ckn_ingestion'],
+      environment: containerEnv,
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'ckn-ingestion' }),
     });
 
@@ -590,6 +680,7 @@ export class CknIngestionStack extends cdk.Stack {
 
     new events.Rule(this, 'CknIngestionSchedule', {
       ruleName: 'ckn-ingestion-daily',
+      enabled: scheduleEnabled,
       schedule: events.Schedule.expression(schedule),
       targets: [new targets.EcsTask({
         cluster,
