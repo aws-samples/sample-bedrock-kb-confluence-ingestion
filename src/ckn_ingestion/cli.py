@@ -39,9 +39,16 @@ _BOTO_CONFIG = BotoConfig(
 )
 
 # --- PII patterns to redact from log output ---
+# NOTE: The SSN pattern requires explicit separators (dash/dot/space) between
+# the 3-2-4 digit groups. A bare 9-digit run is NOT treated as an SSN because
+# Confluence page IDs are 9-digit integers and were previously clobbered to
+# [REDACTED_SSN] in every log line that referenced a page (breaking the ability
+# to correlate a log message to its page). Real SSNs in free text are written
+# with separators; the separator requirement removes the page-ID false positive
+# while still redacting canonically-formatted SSNs.
 _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"), "[REDACTED_EMAIL]"),
-    (re.compile(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b"), "[REDACTED_SSN]"),
+    (re.compile(r"\b\d{3}[-.\s]\d{2}[-.\s]\d{4}\b"), "[REDACTED_SSN]"),
     (re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"), "[REDACTED_PHONE]"),
     (re.compile(r"\b\d{12}\b"), "[REDACTED_ACCOUNT_ID]"),
 ]
