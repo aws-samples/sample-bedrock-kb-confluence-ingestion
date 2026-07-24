@@ -74,40 +74,45 @@ def markdown_tables(draw: st.DrawFn):
     page_title=_safe_cell_text,
 )
 @settings(max_examples=100)
-def test_property5_table_flattening_sentence_format(
+def test_property5_small_table_preserved_as_gfm(
     table_data: tuple[str, list[str], list[list[str]]],
     page_title: str,
 ):
-    """Property 5: Table flattening produces correctly formatted sentences.
+    """Property 5 (F7): a small table (≤ threshold rows) is preserved as GFM.
 
-    For any markdown table with N data rows (excluding header and separator),
-    flatten_tables shall produce exactly N sentences, each in the format
-    "{page_title}: {col1} is {val1}, {col2} is {val2}", where column-value
-    pairs with empty values are omitted.
+    For any markdown table with N data rows under ``DEFAULT_MAX_TABLE_ROWS``,
+    flatten_tables shall emit a header row, exactly one separator row, and one
+    GFM data row per input data row — with NO per-row page-title prefix and NO
+    "is <col>" prose (the F7 anti-pattern). The generator produces ≤ 6 rows, so
+    every generated table is under the threshold.
     """
     md, headers, data_rows = table_data
 
     result = flatten_tables(md, page_title)
-    sentences = [line for line in result.split("\n") if line.strip()]
+    lines = [line for line in result.split("\n") if line.strip()]
 
-    # --- Sentence count equals data row count (rows with all-empty cells produce no sentence) ---
-    expected_sentences = []
-    for row in data_rows:
-        pairs = [f"{col} is {val}" for col, val in zip(headers, row) if val]  # empty cells omitted
-        if pairs:
-            expected_sentences.append(f"{page_title}: {', '.join(pairs)}")
-
-    assert len(sentences) == len(expected_sentences), (
-        f"Expected {len(expected_sentences)} sentences but got {len(sentences)}.\n"
-        f"Input markdown:\n{md}\n"
-        f"Result:\n{result}"
+    # Every non-empty output line is a GFM table line (this table is the whole input).
+    assert all(ln.lstrip().startswith("|") for ln in lines), (
+        f"Expected only GFM table lines.\nInput:\n{md}\nResult:\n{result}"
     )
 
-    # --- Each sentence matches the expected format ---
-    for actual, expected in zip(sentences, expected_sentences):
-        assert actual == expected, (
-            f"Sentence mismatch.\n" f"Expected: {expected!r}\n" f"Actual:   {actual!r}"
-        )
+    # Exactly one separator row, and it is the second line (header, separator, rows...).
+    def _is_sep(line: str) -> bool:
+        body = line.replace("|", "").replace(" ", "").replace(":", "")
+        return len(body) > 0 and set(body) == {"-"}
+
+    sep_lines = [ln for ln in lines if _is_sep(ln)]
+    assert len(sep_lines) == 1, f"Expected exactly one separator row.\nResult:\n{result}"
+
+    # One data row emitted per input data row (rows are preserved, not dropped/merged).
+    data_line_count = len(lines) - 2  # minus header + separator
+    assert data_line_count == len(data_rows), (
+        f"Expected {len(data_rows)} data rows but got {data_line_count}.\n"
+        f"Input:\n{md}\nResult:\n{result}"
+    )
+
+    # The F7 anti-pattern must be gone: no per-row title prefix.
+    assert f"{page_title}: " not in result
 
 
 # ---------------------------------------------------------------------------

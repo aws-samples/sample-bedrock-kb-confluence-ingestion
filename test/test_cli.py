@@ -456,10 +456,13 @@ class TestFlattenSplitIntegration:
             "page": page,
         }
 
-    # 1. flatten_tables receives enriched markdown and page title
+    # 1. flatten_tables receives enriched markdown, page title, and source_url
     def test_flatten_tables_called_with_enriched_markdown_and_title(self):
         mocks = self._run_pipeline()
-        mocks["flatten"].assert_called_once_with("# enriched", "Test Page")
+        call = mocks["flatten"].call_args
+        assert call.args == ("# enriched", "Test Page")
+        # F7: the page URL is passed for the oversized-table summary link.
+        assert "source_url" in call.kwargs
 
     # 2. split_markdown receives the output of flatten_tables and page title
     def test_split_markdown_called_with_flattened_output_and_title(self):
