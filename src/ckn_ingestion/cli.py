@@ -23,6 +23,7 @@ from ckn_ingestion.content_splitter import split_markdown
 from ckn_ingestion.image_processor import PROCESSABLE_MEDIA_TYPES, process_page_images
 from ckn_ingestion.metadata_enricher import enrich_metadata
 from ckn_ingestion.s3_uploader import upload_page
+from ckn_ingestion.size_policy import body_byte_size, build_oversize_placeholder
 from ckn_ingestion.table_flattener import flatten_tables
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,9 @@ def _run(args: argparse.Namespace) -> None:
 
     upload_failed = False
     breaker = SpaceCircuitBreaker()
+    # F5 size policy: count pages whose body was too large to index whole (a
+    # summary placeholder was indexed instead). Reported at run end.
+    oversize_pages = 0
 
     # 9. Process each space and page
     for space_key in spaces_to_process:
@@ -263,17 +267,35 @@ def _run(args: argparse.Namespace) -> None:
             # c. Classify page (on raw markdown, before flattening)
             classification = classify_page(page.title, enriched_markdown, bedrock_client)
 
-            # d. Flatten tables and split content into chunks
-            try:
-                flattened_markdown = flatten_tables(enriched_markdown, page.title)
-                chunks = split_markdown(flattened_markdown, page.title)
-            except Exception as exc:
-                logger.error(
-                    "Flatten/split failed for page '%s' (%s) — falling back to single chunk",
+            # d. Apply the ingestion size policy, then flatten + split into chunks.
+            # Over-cap pages (e.g. multi-MB row-by-row table dumps) are indexed as
+            # a title + summary + source-link placeholder rather than force-chunked
+            # into embedding noise — and the drop is logged, not silent (F5).
+            body_bytes = body_byte_size(enriched_markdown)
+            if body_bytes > config.max_indexable_body_bytes:
+                oversize_pages += 1
+                # Stable token PAGE_BODY_OVERSIZE drives a CloudWatch metric filter,
+                # matching the INGESTION_RUN_COMPLETE marker idiom.
+                logger.warning(
+                    "PAGE_BODY_OVERSIZE page_id=%s title=%s body_bytes=%d limit_bytes=%d "
+                    "— indexing summary placeholder, body skipped",
                     page.page_id,
-                    type(exc).__name__,
+                    page.title,
+                    body_bytes,
+                    config.max_indexable_body_bytes,
                 )
-                chunks = [enriched_markdown]
+                chunks = [build_oversize_placeholder(page, classification)]
+            else:
+                try:
+                    flattened_markdown = flatten_tables(enriched_markdown, page.title)
+                    chunks = split_markdown(flattened_markdown, page.title)
+                except Exception as exc:
+                    logger.error(
+                        "Flatten/split failed for page '%s' (%s) — falling back to single chunk",
+                        page.page_id,
+                        type(exc).__name__,
+                    )
+                    chunks = [enriched_markdown]
 
             # e. Enrich metadata
             sidecar = enrich_metadata(page, classification, has_images)
@@ -349,4 +371,8 @@ def _run(args: argparse.Namespace) -> None:
     # either did not run or did not finish cleanly. Skipped on dry runs (they do
     # not represent a real ingestion) and when uploads failed (not a clean run).
     if not args.dry_run and not upload_failed:
-        logger.info("INGESTION_RUN_COMPLETE run_id=%s", correlation_id.get())
+        logger.info(
+            "INGESTION_RUN_COMPLETE run_id=%s oversize_pages=%d",
+            correlation_id.get(),
+            oversize_pages,
+        )

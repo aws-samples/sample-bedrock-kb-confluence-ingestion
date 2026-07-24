@@ -106,6 +106,24 @@ class TestLoadConfig:
         assert cfg.kb_id
         assert cfg.confluence.spaces
 
+    def test_max_indexable_body_bytes_defaults_when_omitted(self, tmp_path):
+        # F5: field is optional; omitting it yields the module default.
+        from ckn_ingestion.size_policy import DEFAULT_MAX_BODY_BYTES
+
+        path = _write_client_json(tmp_path, _valid_payload())
+        cfg = load_config(path)
+        assert cfg.max_indexable_body_bytes == DEFAULT_MAX_BODY_BYTES
+
+    def test_max_indexable_body_bytes_override_is_honored(self, tmp_path):
+        path = _write_client_json(tmp_path, _valid_payload(max_indexable_body_bytes=250_000))
+        cfg = load_config(path)
+        assert cfg.max_indexable_body_bytes == 250_000
+
+    def test_max_indexable_body_bytes_must_be_positive(self, tmp_path):
+        path = _write_client_json(tmp_path, _valid_payload(max_indexable_body_bytes=0))
+        with pytest.raises(ValueError):
+            load_config(path)
+
 
 # ---------------------------------------------------------------------------
 # update_last_synced

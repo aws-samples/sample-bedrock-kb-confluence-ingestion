@@ -19,6 +19,8 @@ def _make_config(spaces: list[str] | None = None, kb_last_synced: str | None = N
     config.confluence.spaces = spaces or ["SPACE1", "SPACE2"]
     config.confluence.kms_secret_id = "arn:aws:secretsmanager:us-east-1:123:secret:test"
     config.kb_last_synced = kb_last_synced
+    # Real int (not a MagicMock) so the F5 size-policy comparison in _run works.
+    config.max_indexable_body_bytes = 900_000
     return config
 
 
@@ -515,6 +517,81 @@ class TestFlattenSplitIntegration:
             cli_module.main([])
 
         assert call_order == ["classify", "flatten"]
+
+
+class TestSizePolicyIntegration:
+    """F5: over-cap page bodies are indexed as a summary placeholder (body skipped),
+    flatten/split is bypassed, and the drop is logged + counted — not silent."""
+
+    def _run_pipeline(self, *, body_bytes: int, limit: int = 900_000):
+        config = _make_config(spaces=["SPACE1"])
+        config.max_indexable_body_bytes = limit
+
+        page = _make_page()
+        page.url = "https://acme.atlassian.net/wiki/spaces/SPACE1/pages/p1"
+        classification = _make_classification()
+        classification.summary = "Billing dump summary."
+
+        # process_page_images returns the (possibly oversize) enriched markdown.
+        enriched = "x" * body_bytes
+
+        flatten_mock = MagicMock(return_value="# flattened")
+        split_mock = MagicMock(return_value=["chunk-0"])
+        upload_mock = MagicMock()
+
+        with (
+            patch("ckn_ingestion.cli.load_config", return_value=config),
+            patch("ckn_ingestion.cli.update_last_synced"),
+            patch("ckn_ingestion.cli.get_confluence_token", return_value="user:token"),
+            patch("ckn_ingestion.cli.extract_pages", return_value=iter([page])),
+            patch("ckn_ingestion.cli.process_page_images", return_value=enriched),
+            patch("ckn_ingestion.cli.classify_page", return_value=classification),
+            patch("ckn_ingestion.cli.flatten_tables", flatten_mock),
+            patch("ckn_ingestion.cli.split_markdown", split_mock),
+            patch("ckn_ingestion.cli.enrich_metadata", return_value=MagicMock()),
+            patch("ckn_ingestion.cli.upload_page", upload_mock),
+            patch("boto3.client", return_value=MagicMock()),
+        ):
+            cli_module.main([])
+
+        return {"flatten": flatten_mock, "split": split_mock, "upload": upload_mock}
+
+    def test_oversize_body_bypasses_flatten_and_split(self):
+        mocks = self._run_pipeline(body_bytes=1000, limit=500)
+        mocks["flatten"].assert_not_called()
+        mocks["split"].assert_not_called()
+
+    def test_oversize_body_uploads_single_placeholder_chunk(self):
+        mocks = self._run_pipeline(body_bytes=1000, limit=500)
+        chunks = mocks["upload"].call_args.args[4]
+        assert len(chunks) == 1
+        placeholder = chunks[0]
+        assert placeholder.startswith("# Test Page\n\n")
+        assert "Billing dump summary." in placeholder
+        assert "https://acme.atlassian.net/wiki/spaces/SPACE1/pages/p1" in placeholder
+        assert "omitted from the index" in placeholder
+
+    def test_under_cap_body_uses_normal_flatten_split_path(self):
+        mocks = self._run_pipeline(body_bytes=100, limit=500)
+        mocks["flatten"].assert_called_once()
+        mocks["split"].assert_called_once()
+        # Normal path uploads the split chunks, not a placeholder.
+        assert mocks["upload"].call_args.args[4] == ["chunk-0"]
+
+    def test_oversize_warning_is_logged_with_metric_token(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="ckn_ingestion.cli"):
+            self._run_pipeline(body_bytes=1000, limit=500)
+        assert "PAGE_BODY_OVERSIZE" in caplog.text
+
+    def test_completion_marker_reports_oversize_count(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="ckn_ingestion.cli"):
+            self._run_pipeline(body_bytes=1000, limit=500)
+        assert "INGESTION_RUN_COMPLETE" in caplog.text
+        assert "oversize_pages=1" in caplog.text
 
 
 # ---------------------------------------------------------------------------
