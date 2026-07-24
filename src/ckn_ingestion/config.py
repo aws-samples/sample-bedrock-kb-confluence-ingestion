@@ -14,6 +14,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
+from ckn_ingestion.size_policy import DEFAULT_MAX_BODY_BYTES
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +45,13 @@ class AppConfig(BaseModel):
     kb_id: str = Field(..., min_length=1)
     kb_region: str = Field(..., min_length=1)
     kb_last_synced: str | None = None
+    # F5 ingestion size policy: pages whose (post-extraction markdown) body
+    # exceeds this many UTF-8 bytes are indexed as a title + summary + source-link
+    # placeholder instead of having their low-signal body (e.g. a row-by-row table
+    # dump) embedded whole. Distinct from confluence_extractor.MAX_PAGE_BODY_BYTES,
+    # which is a much larger HTML-body hard-skip safety guard at fetch time.
+    # Optional; defaults to size_policy.DEFAULT_MAX_BODY_BYTES when omitted.
+    max_indexable_body_bytes: int = Field(default=DEFAULT_MAX_BODY_BYTES, gt=0)
     confluence: ConfluenceConfig
 
     class Config:
