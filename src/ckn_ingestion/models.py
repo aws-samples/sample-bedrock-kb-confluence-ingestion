@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -46,6 +47,38 @@ class MetadataSidecar:
 
 VALID_DOC_TYPES = {"runbook", "architecture", "postmortem", "contact", "reference"}
 VALID_SEVERITY = {"sev1", "sev2", "all"}
+
+# Free-text classification fields that need normalization for reliable
+# structured filtering (F6). The classifier infers the correct team/service but
+# emits inconsistent casing/spacing/separators ("System Operations" vs.
+# "system operations", "network_security" vs. "Network Security"), which breaks
+# equality filters at query time. Normalizing to a single canonical form
+# (lowercase, hyphen-separated) makes those filters reliable.
+_NORMALIZED_FIELDS = ("owner_team", "service")
+_NORMALIZE_SEP_RE = re.compile(r"[\s_]+")
+_NORMALIZE_STRIP_RE = re.compile(r"[^a-z0-9-]")
+_NORMALIZE_COLLAPSE_RE = re.compile(r"-+")
+
+
+def normalize_vocab(value: str) -> str:
+    """Normalize a free-text classification value to a canonical filter key.
+
+    Lowercase, collapse runs of whitespace/underscores to a single hyphen, drop
+    any remaining non-``[a-z0-9-]`` characters, collapse repeated hyphens, and
+    trim leading/trailing hyphens. Empty or whitespace-only input normalizes to
+    ``"unknown"`` (matching the classifier's own sentinel for owner_team).
+
+    Examples:
+        "System Operations" -> "system-operations"
+        "network_security"  -> "network-security"
+        "GTIO — Platform"   -> "gtio-platform"
+        ""                  -> "unknown"
+    """
+    lowered = value.strip().lower()
+    hyphenated = _NORMALIZE_SEP_RE.sub("-", lowered)
+    cleaned = _NORMALIZE_STRIP_RE.sub("", hyphenated)
+    collapsed = _NORMALIZE_COLLAPSE_RE.sub("-", cleaned).strip("-")
+    return collapsed or "unknown"
 
 FALLBACK_CLASSIFICATION = Classification(
     doc_type="reference",
