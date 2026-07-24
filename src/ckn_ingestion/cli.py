@@ -16,6 +16,7 @@ from botocore.config import Config as BotoConfig
 from pythonjsonlogger import jsonlogger
 
 from ckn_ingestion.bedrock_classifier import classify_page
+from ckn_ingestion.concurrency import another_run_in_progress
 from ckn_ingestion.config import load_config, update_last_synced
 from ckn_ingestion.confluence_extractor import extract_pages, get_confluence_token
 from ckn_ingestion.content_splitter import split_markdown
@@ -200,6 +201,15 @@ def _run(args: argparse.Namespace) -> None:
             config.confluence.spaces,
         )
         sys.exit(1)
+
+    # 4b. Concurrency guard: if another ingestion task of the same ECS task
+    # definition is already RUNNING, exit early rather than crawl in parallel
+    # (overlapping runs produce duplicate corpus generations and index
+    # pollution). Skipped for --dry-run (no writes, safe to run concurrently).
+    # The check fails open — any uncertainty proceeds with the run.
+    if not args.dry_run and another_run_in_progress():
+        logger.warning("Another ingestion run is already in progress; exiting without crawling.")
+        return
 
     # 5. Get Confluence token
     try:

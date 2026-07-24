@@ -330,6 +330,20 @@ export class CknIngestionStack extends cdk.Stack {
               actions: ['bedrock:ListDataSources', 'bedrock:StartIngestionJob'],
               resources: [`arn:aws:bedrock:${this.region}:${this.account}:knowledge-base/*`],
             }),
+            new iam.PolicyStatement({
+              sid: 'EcsConcurrencyGuard',
+              // The app lists RUNNING tasks of its own family to avoid
+              // overlapping crawls (cli.py concurrency guard). ecs:ListTasks
+              // does not support resource-level ARNs, so it is scoped to this
+              // cluster via the ecs:cluster condition key.
+              actions: ['ecs:ListTasks'],
+              resources: ['*'],
+              conditions: {
+                ArnEquals: {
+                  'ecs:cluster': `arn:aws:ecs:${this.region}:${this.account}:cluster/ckn-ingestion`,
+                },
+              },
+            }),
             new iam.PolicyStatement({ sid: 'S3Upload', actions: ['s3:PutObject', 's3:PutObjectTagging'], resources: [`${bucket.bucketArn}/confluence/*`] }),
             new iam.PolicyStatement({
               sid: 'AossAccess',
