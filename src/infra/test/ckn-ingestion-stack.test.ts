@@ -7,8 +7,16 @@ import { CknIngestionStack } from '../lib/ckn-ingestion-stack';
  *
  * The VPC is now CDK-managed (new ec2.Vpc), so no VPC lookup context is needed.
  */
-function synthesizeTemplate(accountId: string): Record<string, any> {
-  const app = new cdk.App();
+function synthesizeTemplate(
+  accountId: string,
+  opts: { deployKb?: boolean } = {},
+): Record<string, any> {
+  // The Bedrock KB + S3 data source are gated behind the `deployKb` context
+  // (two-phase deploy). Tests that assert on KB/DataSource resources must
+  // synthesize with it enabled, or those resources are absent from the template.
+  const app = new cdk.App({
+    context: opts.deployKb ? { deployKb: 'true' } : {},
+  });
 
   const stack = new CknIngestionStack(app, 'TestStack', {
     env: { account: accountId, region: 'us-east-1' },
@@ -292,7 +300,7 @@ describe('Index Creator Fargate task definition', () => {
 // ---------------------------------------------------------------------------
 
 describe('Bedrock Knowledge Base configuration', () => {
-  const template = synthesizeTemplate('123456789012');
+  const template = synthesizeTemplate('123456789012', { deployKb: true });
 
   describe('CfnKnowledgeBase', () => {
     it('exists with correct name and embedding model', () => {
@@ -350,19 +358,20 @@ describe('Bedrock Knowledge Base configuration', () => {
       expect(dsConfig.S3Configuration.InclusionPrefixes).toEqual(['confluence/']);
     });
 
-    it('uses semantic chunking with correct parameters', () => {
+    it('disables KB re-chunking (NONE) so the pipeline owns chunking (F9 Option A)', () => {
       const dataSources = findResources(template, 'AWS::Bedrock::DataSource');
       expect(dataSources.length).toBe(1);
 
       const chunkingConfig = dataSources[0][1].Properties
         .VectorIngestionConfiguration.ChunkingConfiguration;
 
-      expect(chunkingConfig.ChunkingStrategy).toBe('SEMANTIC');
+      // The pipeline (content_splitter.split_markdown) pre-chunks and size-caps
+      // each page, so Bedrock must embed each S3 object as-is (one object ->
+      // one vector) rather than re-chunking it.
+      expect(chunkingConfig.ChunkingStrategy).toBe('NONE');
 
-      const semanticConfig = chunkingConfig.SemanticChunkingConfiguration;
-      expect(semanticConfig.MaxTokens).toBe(500);
-      expect(semanticConfig.BreakpointPercentileThreshold).toBe(95);
-      expect(semanticConfig.BufferSize).toBe(1);
+      // No semantic-chunking sub-config should remain when strategy is NONE.
+      expect(chunkingConfig.SemanticChunkingConfiguration).toBeUndefined();
     });
   });
 

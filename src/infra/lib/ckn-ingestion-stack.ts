@@ -529,13 +529,19 @@ export class CknIngestionStack extends cdk.Stack {
           },
         },
         vectorIngestionConfiguration: {
+          // F9 Option A: the pipeline owns chunking. `content_splitter.split_markdown`
+          // pre-chunks each page at H1/H2 boundaries and caps chunk size (see
+          // DEFAULT_MAX_CHUNK_CHARS), so every object the pipeline writes to S3 is
+          // already a retrieval-sized, self-contained chunk. NONE tells Bedrock to
+          // embed each object as-is (one object -> one vector) rather than
+          // re-chunking, keeping heading context and title prefix intact per chunk.
+          // NOTE: chunkingConfiguration is IMMUTABLE — CloudFormation marks it
+          // `Update requires: Replacement`, so changing this on an existing data
+          // source replaces it (new dataSourceId) and requires a full reindex of
+          // the corpus. Follow docs/REINDEX_RUNBOOK.md; do not edit this in place
+          // on a live KB without that procedure.
           chunkingConfiguration: {
-            chunkingStrategy: 'SEMANTIC',
-            semanticChunkingConfiguration: {
-              maxTokens: 500,
-              breakpointPercentileThreshold: 95,
-              bufferSize: 1,
-            },
+            chunkingStrategy: 'NONE',
           },
         },
       });
