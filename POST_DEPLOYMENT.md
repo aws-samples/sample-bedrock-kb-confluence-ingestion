@@ -216,3 +216,13 @@ Monitor logs at `/ckn/ingestion` in CloudWatch:
 ```bash
 aws logs tail /ckn/ingestion --follow --region "$CKN_REGION" --profile "$CKN_PROFILE"
 ```
+
+## 7. Changing the KB Chunking Strategy (Reindex)
+
+The data source is configured with `chunkingStrategy: NONE` — the pipeline owns
+chunking (`content_splitter.split_markdown` pre-chunks and size-caps each page),
+so Bedrock embeds each S3 object as-is. `chunkingConfiguration` is **immutable**:
+changing the chunking strategy on an existing data source **replaces** it (new
+`dataSourceId`) and requires a **full reindex** of the corpus. See
+[`docs/REINDEX_RUNBOOK.md`](docs/REINDEX_RUNBOOK.md) for the deploy-affecting
+procedure and rollback.
